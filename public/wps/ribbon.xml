@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+  <ribbon>
+    <tabs>
+      <tab id="OfficeHelperTab" label="小帮手">
+        <group id="OfficeHelperGroup" label="日常办公">
+          <button id="OpenOfficeHelper" label="帮我一下" size="large" onAction="OnOpenHelper" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

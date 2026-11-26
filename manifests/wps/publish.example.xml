@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 开发参考：用官方 wpsjs 发布流程生成目标版本对应的配置。勿覆盖用户已有加载项配置。 -->
+<jsplugins>
+  <jspluginonline name="OfficeHelperWriter" type="wps" url="http://127.0.0.1:5173/wps/writer/" enable="enable_dev" debug="" install="null" />
+  <jspluginonline name="OfficeHelperSheet" type="et" url="http://127.0.0.1:5173/wps/sheet/" enable="enable_dev" debug="" install="null" />
+</jsplugins>
