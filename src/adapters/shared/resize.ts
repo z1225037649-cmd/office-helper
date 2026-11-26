@@ -5,8 +5,14 @@ export function validateResize(
   plan: ActionPlan,
   selection: SelectionSnapshot,
 ): asserts plan is { type: 'text.resize'; size: number } {
-  if (plan.type !== 'text.resize' || !Number.isFinite(plan.size) || plan.size < 8 || plan.size > 72)
-    throw new HelperError('INVALID_PLAN', '字号需要在 8 到 72 磅之间。');
+  if (
+    plan.type !== 'text.resize' ||
+    !Number.isFinite(plan.size) ||
+    plan.size < 8 ||
+    plan.size > 72 ||
+    !Number.isInteger(plan.size * 2)
+  )
+    throw new HelperError('INVALID_PLAN', '字号需要在 8 到 72 磅之间，本版支持每次0.5磅的精度。');
   if (!selection.text?.trim()) throw new HelperError('EMPTY_SELECTION', '请先选中想放大的文字。');
   if (!selection.fontSize || selection.fontSize <= 0 || selection.fontSize > 1638)
     throw new HelperError(

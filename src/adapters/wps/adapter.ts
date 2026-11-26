@@ -4,6 +4,7 @@ import type {
   ChangeReceipt,
   DocumentKind,
   SelectionSnapshot,
+  TextActionPlan,
 } from '../../core/contracts';
 import { HelperError } from '../../core/errors';
 import {
@@ -14,6 +15,30 @@ import {
 import { ReadOnlyAdapter } from '../shared/read-only-adapter';
 import { getWpsApplication, type WpsApplication, type WpsRange } from './bridge';
 import { validateResize } from '../shared/resize';
+import { textPlanMessage, validateTextSelection } from '../../core/text-format';
+import {
+  projectedParagraphRevision,
+  readWpsParagraphs,
+  restoreWpsParagraphs,
+  writeWpsParagraphs,
+  type WpsParagraphState,
+} from './paragraphs';
+
+// WPS desktop uses msoTrue (-1), msoFalse (0), and a separate mixed/unknown value.
+function readBold(font: { Bold?: number | boolean } | undefined): boolean | undefined {
+  try {
+    const value = font?.Bold;
+    if (value === true || value === -1) return true;
+    if (value === false || value === 0) return false;
+  } catch {
+    // An older bridge may not expose Bold; resizing remains available.
+  }
+  return undefined;
+}
+
+function readSize(value: number | undefined): number | undefined {
+  return value && value > 0 && value <= 1638 ? value : undefined;
+}
 
 export class WpsAdapter extends ReadOnlyAdapter {
   private readonly sessionId = crypto.randomUUID();
@@ -22,9 +47,14 @@ export class WpsAdapter extends ReadOnlyAdapter {
     token: string;
     range: WpsRange;
     documentId: string;
-    beforeSize: number;
+    type: TextActionPlan['type'];
+    beforeSize?: number;
+    beforeBold?: boolean;
     afterText: string;
-    afterSize: number;
+    afterSize?: number;
+    afterBold?: boolean;
+    beforeParagraphs?: WpsParagraphState;
+    afterParagraphRevision?: string;
   };
   constructor(
     kind: DocumentKind,
@@ -36,11 +66,20 @@ export class WpsAdapter extends ReadOnlyAdapter {
       kind,
       capabilities: [
         'selection.read',
-        ...(kind === 'text' ? (['text.resize', 'history.undo'] as const) : []),
+        ...(kind === 'text'
+          ? ([
+              'text.resize',
+              'text.bold',
+              'paragraph.center',
+              'paragraph.spacing',
+              'paragraph.indent',
+              'history.undo',
+            ] as const)
+          : []),
       ],
       notice:
         kind === 'text'
-          ? '先选中想处理的文字。支持恢复本次会话的最后一次字号修改。'
+          ? '先选中文字。支持字号、加粗、普通正文居中、倍数行距和首行缩进；段落操作处理所在完整段落，每次最多20段，可恢复最后一次格式修改。'
           : '选中要计算的单元格，合计会显示在助手里。',
     });
   }
@@ -58,15 +97,24 @@ export class WpsAdapter extends ReadOnlyAdapter {
       kind: this.info.kind,
     };
     if (this.info.kind === 'text') {
-      const text = String(selection.Text ?? '');
-      const size = selection.Font?.Size;
+      // A collapsed WPS selection may still return the character to its right.
+      const hasTextRange =
+        Number.isInteger(selection.Start) &&
+        Number.isInteger(selection.End) &&
+        selection.Start! < selection.End!;
+      const text = hasTextRange ? String(selection.Text ?? '') : '';
+      const size = readSize(selection.Font?.Size);
+      const bold = readBold(selection.Font);
+      const paragraphs = hasTextRange ? readWpsParagraphs(selection.Range, app) : undefined;
       const snapshot: SelectionSnapshot = {
         ...base,
         targetId: `${selection.Start}:${selection.End}`,
         targetLabel: '当前选中文字',
-        revision: JSON.stringify([text, size]),
+        revision: JSON.stringify([text, size, bold, paragraphs?.revision]),
         text,
-        fontSize: size && size > 0 && size <= 1638 ? size : undefined,
+        fontSize: size,
+        bold,
+        ...(paragraphs ? { paragraphs: paragraphs.snapshots } : {}),
       };
       assertSelectionLimit(snapshot);
       return snapshot;
@@ -105,7 +153,8 @@ export class WpsAdapter extends ReadOnlyAdapter {
   ): Promise<ChangeReceipt> {
     this.ensureActive();
     if (this.info.kind !== 'text') throw new HelperError('UNAVAILABLE', '表格暂时只支持读取。');
-    validateResize(plan, expected);
+    if (plan.type === 'text.resize') validateResize(plan, expected);
+    else validateTextSelection(plan, expected);
     assertSameSelection(expected, await this.readSelection());
     const app = this.getApplication();
     const doc = app.ActiveDocument;
@@ -119,29 +168,69 @@ export class WpsAdapter extends ReadOnlyAdapter {
       throw new HelperError('STALE_SELECTION', '当前文件变了，请重新预览。');
     if (doc.ReadOnly || (doc.ProtectionType !== undefined && doc.ProtectionType !== -1))
       throw new HelperError('UNAVAILABLE', '文档是只读或受保护状态，请在可编辑文档中操作。');
+    const beforeParagraphs = readWpsParagraphs(range, app);
+    if (plan.type.startsWith('paragraph.') && !beforeParagraphs)
+      throw new HelperError(
+        'UNAVAILABLE',
+        '当前版本只能处理可准确读取的普通正文段落，暂不支持表格、列表或其他文字区域。',
+      );
     if (
       `${range.Start}:${range.End}` !== expected.targetId ||
       range.Text !== expected.text ||
-      range.Font.Size !== expected.fontSize
+      readSize(range.Font.Size) !== expected.fontSize ||
+      readBold(range.Font) !== expected.bold ||
+      JSON.stringify([
+        range.Text,
+        readSize(range.Font.Size),
+        readBold(range.Font),
+        beforeParagraphs?.revision,
+      ]) !== expected.revision
     )
       throw new HelperError('STALE_SELECTION', '选中的内容变了，请重新预览。');
     this.change = undefined;
-    range.Font.Size = plan.size;
-    if (range.Font.Size !== plan.size || range.Text !== expected.text)
+    let afterText: string;
+    let afterSize: number | undefined;
+    let afterBold: boolean | undefined;
+    let afterParagraphs: WpsParagraphState | undefined;
+    try {
+      if (plan.type === 'text.resize') range.Font.Size = plan.size;
+      else if (plan.type === 'text.bold') range.Font.Bold = plan.bold ? -1 : 0;
+      else writeWpsParagraphs(beforeParagraphs!, plan);
+      afterText = range.Text;
+      afterSize = readSize(range.Font.Size);
+      afterBold = readBold(range.Font);
+      afterParagraphs = readWpsParagraphs(range, app);
+      if (
+        afterText !== expected.text ||
+        afterSize !== (plan.type === 'text.resize' ? plan.size : expected.fontSize) ||
+        afterBold !== (plan.type === 'text.bold' ? plan.bold : expected.bold) ||
+        (beforeParagraphs && !afterParagraphs) ||
+        (plan.type.startsWith('paragraph.') &&
+          beforeParagraphs &&
+          afterParagraphs?.revision !== projectedParagraphRevision(beforeParagraphs, plan))
+      )
+        throw new Error('WPS format read-back mismatch');
+    } catch {
       throw new HelperError(
         'INVALID_PLAN',
-        '字号可能已修改，但结果检查未完成，请查看文档并使用 WPS 的撤销。',
+        '格式可能已修改，但结果检查未完成，请查看文档并使用 WPS 的撤销。',
       );
+    }
     const token = crypto.randomUUID();
     this.change = {
       token,
       range,
       documentId: expected.documentId,
-      beforeSize: expected.fontSize!,
-      afterText: range.Text,
-      afterSize: plan.size,
+      type: plan.type,
+      beforeSize: expected.fontSize,
+      beforeBold: expected.bold,
+      afterText,
+      afterSize,
+      afterBold,
+      beforeParagraphs,
+      afterParagraphRevision: afterParagraphs?.revision,
     };
-    return { token, message: `已把选中文字调整为 ${plan.size} 磅。`, canUndo: true };
+    return { token, message: textPlanMessage(plan), canUndo: true };
   }
 
   override async undo(receipt: ChangeReceipt): Promise<void> {
@@ -159,11 +248,28 @@ export class WpsAdapter extends ReadOnlyAdapter {
       throw new HelperError('STALE_SELECTION', '当前文件变了，请回到刚才的文档再恢复。');
     if (doc.ReadOnly || (doc.ProtectionType !== undefined && doc.ProtectionType !== -1))
       throw new HelperError('UNAVAILABLE', '文档处于只读或保护状态，无法恢复。');
-    if (change.range.Text !== change.afterText || change.range.Font.Size !== change.afterSize)
+    if (
+      change.range.Text !== change.afterText ||
+      readSize(change.range.Font.Size) !== change.afterSize ||
+      readBold(change.range.Font) !== change.afterBold ||
+      readWpsParagraphs(change.range, app)?.revision !== change.afterParagraphRevision
+    )
       throw new HelperError('STALE_SELECTION', '这段文字后来又被修改了，不能覆盖新的修改。');
-    change.range.Font.Size = change.beforeSize;
-    if (change.range.Font.Size !== change.beforeSize)
-      throw new HelperError('INVALID_PLAN', '恢复结果需要检查，请查看文档。');
+    try {
+      if (change.type === 'text.resize') change.range.Font.Size = change.beforeSize!;
+      else if (change.type === 'text.bold') change.range.Font.Bold = change.beforeBold ? -1 : 0;
+      else restoreWpsParagraphs(change.beforeParagraphs!, change.type);
+      if (
+        change.range.Text !== change.afterText ||
+        readSize(change.range.Font.Size) !== change.beforeSize ||
+        readBold(change.range.Font) !== change.beforeBold ||
+        readWpsParagraphs(change.range, app)?.revision !== change.beforeParagraphs?.revision
+      )
+        throw new Error('WPS restore read-back mismatch');
+    } catch {
+      this.change = undefined;
+      throw new HelperError('INVALID_PLAN', '恢复结果需要检查，请查看文档并使用 WPS 的撤销。');
+    }
     this.change = undefined;
   }
 

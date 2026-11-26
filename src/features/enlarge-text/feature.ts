@@ -18,7 +18,7 @@ export const enlargeText: FeatureDefinition = {
     if (selection.fontSize === size)
       throw new HelperError('INVALID_PLAN', '文字已经足够大了，这次不需要修改。');
     return {
-      summary: `将选中的文字调整为 ${size} 磅，文字内容保持不变。`,
+      summary: `将选中的文字从 ${selection.fontSize} 磅调整为 ${size} 磅，文字内容保持不变。字号修改可能改变分页。`,
       plan: { type: 'text.resize', size },
     };
   },

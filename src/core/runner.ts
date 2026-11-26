@@ -11,6 +11,7 @@ import type {
 import { HelperError } from './errors';
 import { FeatureRegistry } from './registry';
 import { assertSameSelection, assertSelectionLimit } from './selection';
+import { validateTextPlan } from './text-format';
 
 interface PendingTask {
   view: PreparedTask;
@@ -132,12 +133,9 @@ export class TaskRunner {
 
   private validatePlan(plan: ActionPlan): void {
     if (plan.type === 'report' && typeof plan.message === 'string' && plan.message.trim()) return;
-    if (plan.type === 'text.resize') {
-      if (!this.host.info.capabilities.includes('text.resize'))
-        throw new HelperError('UNAVAILABLE', '当前版本暂不能修改文字大小。');
-      if (Number.isFinite(plan.size) && plan.size >= 8 && plan.size <= 72) return;
-    }
-    throw new HelperError('INVALID_PLAN', '这个操作暂时无法完成，请换一种说法。');
+    validateTextPlan(plan);
+    if (!this.host.info.capabilities.includes(plan.type))
+      throw new HelperError('UNAVAILABLE', '当前版本暂不能执行这个格式操作。');
   }
 
   private async exclusive<T>(operation: () => Promise<T>): Promise<T> {

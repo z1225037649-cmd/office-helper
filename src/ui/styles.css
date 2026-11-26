@@ -872,6 +872,9 @@ p {
 .native-mode .assistant-body {
   padding: 22px;
 }
+.native-mode :is(.preview-card, .result-card, .error-card, .info-message) {
+  scroll-margin-top: 84px;
+}
 .large-text .assistant-body .welcome p,
 .large-text .assistant-body input,
 .large-text .assistant-body label,

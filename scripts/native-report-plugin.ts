@@ -5,6 +5,7 @@ export function nativeReportPlugin(): Plugin {
   return {
     name: 'local-native-test-report',
     configureServer(server) {
+      const claims = new Set<string>();
       server.middlewares.use((request, _response, next) => {
         if (process.env.HELPER_NATIVE_TEST_TOKEN && request.url?.startsWith('/wps')) {
           const record =
@@ -76,6 +77,17 @@ export function nativeReportPlugin(): Plugin {
           void (async () => {
             try {
               const report = JSON.parse(body);
+              // WPS can keep multiple task panes alive. Only one may mutate the
+              // dedicated fixture during a native acceptance run.
+              if (report.stage === 'claim') {
+                const key = String(report.run);
+                if (claims.has(key)) {
+                  response.statusCode = 409;
+                  response.end('already running');
+                  return;
+                }
+                claims.add(key);
+              }
               await mkdir('output/native', { recursive: true });
               await appendFile(
                 'output/native/results.jsonl',

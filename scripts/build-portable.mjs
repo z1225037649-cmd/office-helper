@@ -7,6 +7,34 @@ import { generateSideloadFile } from 'office-addin-dev-settings';
 import { OfficeAddinManifest, OfficeApp } from 'office-addin-manifest';
 import JSZip from 'jszip';
 
+function populateWorksheetSample(xml) {
+  let matches = 0;
+  const replaced = xml.replace(
+    /<((?:[A-Za-z_][\w.-]*:)?sheetData)\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)/g,
+    (_match, tag, attributes) => {
+      matches += 1;
+      const prefix = tag.slice(0, -'sheetData'.length);
+      const textCell = (address, text) =>
+        `<${prefix}c r="${address}" t="inlineStr"><${prefix}is><${prefix}t>${text}</${prefix}t></${prefix}is></${prefix}c>`;
+      const rows =
+        `<${prefix}row r="1">${textCell('A1', '项目')}${textCell('B1', '金额')}</${prefix}row>` +
+        [120, 85, 45.5, 200]
+          .map(
+            (value, i) =>
+              `<${prefix}row r="${i + 2}">${textCell(`A${i + 2}`, `项目${i + 1}`)}<${prefix}c r="B${i + 2}"><${prefix}v>${value}</${prefix}v></${prefix}c></${prefix}row>`,
+          )
+          .join('');
+      return `<${tag}${attributes}>${rows}</${tag}>`;
+    },
+  );
+  if (matches !== 1 || replaced === xml)
+    throw new Error('The Microsoft Excel template must contain exactly one supported sheetData.');
+  return replaced.replace(
+    /<((?:[A-Za-z_][\w.-]*:)?dimension)\b[^>]*\/>/,
+    (_match, tag) => `<${tag} ref="A1:B5"/>`,
+  );
+}
+
 const run = promisify(execFile);
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Build the Windows x64 portable package on Windows x64.');
@@ -59,10 +87,14 @@ for (const dependency of [
 }
 const original = await readFile('manifests/office/manifest.xml', 'utf8');
 const portableManifest = original
+  .replace(/<Version>[^<]+<\/Version>/, `<Version>${pkg.version}.0</Version>`)
   .replaceAll('26b5f5ec-853a-4c06-9c1c-8ac9ea33421a', 'f5202c69-1f59-4e09-b510-829a3748a31b')
   .replaceAll('localhost:3443', 'localhost:18766')
   .replace('办公小帮手（开发版）', '办公小帮手（便携试用版）')
-  .replace('用简单的操作查看选区和计算合计。', '查看选区、放大文字、计算合计并恢复字号修改。');
+  .replace(
+    '用简单的操作查看选区和计算合计。',
+    '查看选区，调整字号、加粗、居中、倍数行距和首行缩进，预览后确认并支持单步恢复；表格合计只读。',
+  );
 const manifestPath = join(destination, 'manifests/office.xml');
 await writeFile(manifestPath, portableManifest);
 for (const [component, hostName] of [
@@ -91,37 +123,26 @@ for (const [app, extension] of [
   const zip = await JSZip.loadAsync(await readFile(generated));
   if (extension === 'docx') {
     const part = 'word/document.xml';
-    const xml = await zip.file(part).async('string');
+    const document = zip.file(part);
+    if (!document) throw new Error('The Microsoft Word template has no document.');
+    const xml = await document.async('string');
+    const paragraphFormat =
+      '<w:pPr><w:spacing w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr>';
     const body =
-      '<w:p><w:r><w:rPr><w:sz w:val="36"/></w:rPr><w:t>社区活动通知</w:t></w:r></w:p><w:p><w:r><w:t>请选中上方标题，在右侧小帮手中点击“把字放大”，确认后查看效果，再点击“恢复上一次修改”。</w:t></w:r></w:p>';
-    await zip.file(
-      part,
-      xml.replace(
-        /(<w:body[^>]*>)[\s\S]*?(<w:sectPr[\s\S]*?<\/w:sectPr>\s*)?<\/w:body>/,
-        (_match, open, section) => open + body + (section ?? '') + '</w:body>',
-      ),
+      `<w:p>${paragraphFormat}<w:r><w:rPr><w:sz w:val="36"/></w:rPr><w:t>社区活动通知</w:t></w:r></w:p>` +
+      `<w:p>${paragraphFormat}<w:r><w:t>请选中上方标题，在右侧小帮手预览并确认字号、加粗、段落居中、行距或首行缩进，再点击“恢复上一次修改”。例如：行距设为1.5倍、首行缩进1厘米。</w:t></w:r></w:p>`;
+    const replaced = xml.replace(
+      /(<w:body[^>]*>)[\s\S]*?(<w:sectPr[\s\S]*?<\/w:sectPr>\s*)?<\/w:body>/,
+      (_match, open, section) => open + body + (section ?? '') + '</w:body>',
     );
+    if (replaced === xml || !replaced.includes(body))
+      throw new Error('The Microsoft Word template body could not be populated.');
+    zip.file(part, replaced);
   } else {
     const part = Object.keys(zip.files).find((path) => /^xl\/worksheets\/[^/]+\.xml$/.test(path));
     if (!part) throw new Error('The Microsoft Excel template has no worksheet.');
     const xml = await zip.file(part).async('string');
-    const rows =
-      '<row r="1"><c r="A1" t="inlineStr"><is><t>项目</t></is></c><c r="B1" t="inlineStr"><is><t>金额</t></is></c></row>' +
-      [120, 85, 45.5, 200]
-        .map(
-          (value, i) =>
-            `<row r="${i + 2}"><c r="A${i + 2}" t="inlineStr"><is><t>项目${i + 1}</t></is></c><c r="B${i + 2}"><v>${value}</v></c></row>`,
-        )
-        .join('');
-    await zip.file(
-      part,
-      xml
-        .replace(
-          /<sheetData\s*\/>|<sheetData[^>]*>[\s\S]*?<\/sheetData>/,
-          '<sheetData>' + rows + '</sheetData>',
-        )
-        .replace(/<dimension[^>]*\/>/, '<dimension ref="A1:B5"/>'),
-    );
+    zip.file(part, populateWorksheetSample(xml));
   }
   await writeFile(
     join(destination, 'samples', 'OfficeHelper-Sample.' + extension),
@@ -184,6 +205,8 @@ await run(
   [
     '-NoProfile',
     '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
     '-File',
     resolve('scripts/zip-portable.ps1'),
     '-Source',

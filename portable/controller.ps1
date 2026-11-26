@@ -35,6 +35,17 @@ function Find-Application([string]$Executable) {
       if (Test-Path -LiteralPath $value) { return $value }
     }
   }
+  if ($Executable -ieq 'wps.exe') {
+    # Custom WPS installations may omit App Paths. Use the executable of an
+    # already-running writer, rather than guessing a location or a file association.
+    try { $processes = @(Get-Process -Name wps -ErrorAction SilentlyContinue) } catch { $processes = @() }
+    foreach ($process in $processes) {
+      try {
+        $value = $process.Path
+        if ($value -and [IO.Path]::IsPathRooted($value) -and [IO.Path]::GetFullPath($value) -eq $value -and [IO.Path]::GetFileName($value) -ieq $Executable -and (Test-Path -LiteralPath $value -PathType Leaf)) { return $value }
+      } catch { continue } # Exited or inaccessible processes must not block inspection.
+    }
+  }
   return $null
 }
 function Merge-Wps([bool]$Remove) {

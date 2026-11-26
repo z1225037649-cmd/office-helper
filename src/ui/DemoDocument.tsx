@@ -68,10 +68,21 @@ export function DemoDocument({ selection, kind, disabled, onSwitch }: Props) {
           <div className="paper-surround">
             <article className="paper">
               <div className="paper-eyebrow">邻里相聚 · 美好生活</div>
-              <h2>
+              <h2
+                style={{
+                  fontSize: `${selection?.fontSize ?? 18}pt`,
+                  textAlign:
+                    selection?.paragraphs?.[0]?.alignment === 'Centered' ? 'center' : 'left',
+                  lineHeight: (selection?.paragraphs?.[0]?.lineSpacing ?? 12) / 12,
+                  textIndent: `${selection?.paragraphs?.[0]?.firstLineIndent ?? 0}pt`,
+                }}
+              >
                 <mark
                   data-testid="demo-title"
-                  style={{ fontSize: `${selection?.fontSize ?? 18}pt` }}
+                  style={{
+                    fontSize: `${selection?.fontSize ?? 18}pt`,
+                    fontWeight: selection?.bold ? 700 : 400,
+                  }}
                 >
                   社区活动通知
                 </mark>

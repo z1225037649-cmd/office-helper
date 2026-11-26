@@ -81,6 +81,18 @@ function Get-ItemProperty {
   $r=Read-TestRegistry
   if($r.PSObject.Properties[$Name]){return $r};return $null
 }
+function Get-Process {
+  [CmdletBinding()]param([string]$Name)
+  [IO.File]::AppendAllText((Join-Path $env:HELPER_TEST_ROOT 'process-queries.txt'),($Name+"`n"))
+  if($Name -ne 'wps'){throw 'Unexpected process discovery target'}
+  if([IO.File]::Exists((Join-Path $env:HELPER_TEST_ROOT 'process-query-error'))){throw 'Injected process discovery error'}
+  $path=Join-Path $env:HELPER_TEST_ROOT 'processes.json'
+  $entries=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+  foreach($entry in $entries){
+    if($entry.denied){$p=[pscustomobject]@{};$p|Add-Member ScriptProperty Path {throw 'Injected inaccessible process'}; $p}
+    else{[pscustomobject]@{Path=$entry.path}}
+  }
+}
 function New-Object {
   [CmdletBinding()]param([Parameter(Position=0)][string]$TypeName,[Parameter(Position=1)][object[]]$ArgumentList)
   if($TypeName -eq 'Net.Sockets.TcpListener'){
@@ -111,6 +123,7 @@ function New-Scenario {
   $apps=@{}
   foreach($name in @('WINWORD.EXE','EXCEL.EXE','wps.exe')){$file=Join-Path $root ('fake-apps\'+$name);Write-TestFile $file ''; $apps[$name]=$file}
   Write-TestFile (Join-Path $root 'apps.json') ($apps|ConvertTo-Json)
+  Write-TestFile (Join-Path $root 'processes.json') '[]'
   Write-TestFile (Join-Path $root 'registry.json') (@{'existing-addon'='C:\existing.xml';'26b5f5ec-853a-4c06-9c1c-8ac9ea33421a'='C:\dev.xml'}|ConvertTo-Json)
   $publish=Join-Path $root 'roaming\kingsoft\wps\jsaddons\publish.xml'
   Write-TestFile $publish '<jsplugins><!--keep-comment--><jspluginonline name="ExistingPlugin" url="https://example.test/"/><jspluginonline name="OfficeHelperWriter" url="http://127.0.0.1:5173/wps/writer/"/><jspluginonline name="OfficeHelperSheet" url="http://127.0.0.1:5173/wps/sheet/"/></jsplugins>'
@@ -135,6 +148,61 @@ try {
     $s=New-Scenario; $result=Invoke-ControllerTest $s -Action Inspect
     Assert-True ($result.data.ok -and $result.data.applications.word -and $result.data.applications.wps) 'Installed apps should be reported.'
     Assert-True (-not [IO.Directory]::Exists($s.state) -and (Read-Trace $s) -eq '') 'Inspect must not mutate state or trust.'
+  }
+  Test-Case 'Registered WPS takes priority over running process discovery' {
+    $s=New-Scenario
+    Write-TestFile (Join-Path $s.root 'process-query-error') ''
+    $r=Invoke-ControllerTest $s -Action Inspect
+    $registered=(Get-Content -LiteralPath (Join-Path $s.root 'apps.json') -Raw|ConvertFrom-Json).'wps.exe'
+    Assert-True ($r.data.ok -and $r.data.applications.wps -eq $registered) 'Registered WPS must retain priority.'
+    Assert-True (-not [IO.File]::Exists((Join-Path $s.root 'process-queries.txt'))) 'Process discovery must not run when the registered WPS exists.'
+  }
+  Test-Case 'Custom running WPS is detected and opened without inventing Office installations' {
+    $s=New-Scenario;Write-TestFile (Join-Path $s.root 'apps.json') '{}'
+    $wps=Join-Path $s.root 'custom apps\WPS Office\12.1.0.29690\office6\wps.exe';Write-TestFile $wps ''
+    Write-TestFile (Join-Path $s.root 'processes.json') (@(@{path=$wps})|ConvertTo-Json -Compress)
+    $r=Invoke-ControllerTest $s -Action Inspect
+    Assert-True ($r.data.ok -and $r.data.applications.wps -eq $wps) 'Custom running WPS should be discovered.'
+    Assert-True (-not $r.data.applications.word -and -not $r.data.applications.excel) 'WPS must not be mistaken for Word or Excel.'
+    Assert-True (-not [IO.Directory]::Exists($s.state) -and (Read-Trace $s) -eq '') 'Inspect remains read-only.'
+    $r=Invoke-ControllerTest $s -Hosts Wps
+    Assert-True ($r.data.ok -and (Read-Trace $s) -eq '') 'Discovered WPS should prepare without Office or certificates.'
+    $r=Invoke-ControllerTest $s -Action OpenWps -Hosts Wps -AllowAppLaunch
+    $launch=Get-Content -LiteralPath (Join-Path $s.root 'launch.json') -Raw|ConvertFrom-Json
+    Assert-True ($r.data.ok -and $launch.filePath -eq $wps -and $launch.windowStyle -eq 'Normal') 'OpenWps must launch the discovered executable visibly.'
+    $queries=[IO.File]::ReadAllLines((Join-Path $s.root 'process-queries.txt'))
+    Assert-True (@($queries|Where-Object {$_ -ne 'wps'}).Count -eq 0) 'Only WPS processes may supply this fallback.'
+  }
+  Test-Case 'Inaccessible and stale WPS processes are skipped before a valid process' {
+    $s=New-Scenario;Write-TestFile (Join-Path $s.root 'apps.json') '{}'
+    $wps=Join-Path $s.root 'custom apps\wps.exe';Write-TestFile $wps ''
+    $processes=@(@{denied=$true},@{path=(Join-Path $s.root 'removed\wps.exe')},@{path=$wps})
+    Write-TestFile (Join-Path $s.root 'processes.json') ($processes|ConvertTo-Json -Compress)
+    $r=Invoke-ControllerTest $s -Action Inspect
+    Assert-True ($r.data.ok -and $r.data.applications.wps -eq $wps) ('One inaccessible or exited process must not prevent another valid WPS process from being used: '+($r.data|ConvertTo-Json -Compress))
+  }
+  Test-Case 'Invalid process paths cannot identify a WPS installation' {
+    $s=New-Scenario;Write-TestFile (Join-Path $s.root 'apps.json') '{}'
+    $other=Join-Path $s.root 'custom apps\not-wps.exe';Write-TestFile $other ''
+    $directory=Join-Path $s.root 'directory\wps.exe';[void][IO.Directory]::CreateDirectory($directory)
+    $existing=Join-Path $s.root 'actual\wps.exe';Write-TestFile $existing ''
+    $rootRelative=$existing.Substring(2);$driveRelative=$existing.Substring(0,2)+$existing.Substring(3)
+    $processes=@(@{denied=$true},@{path=$null},@{path=(Join-Path $s.root 'missing\wps.exe')},@{path=$other},@{path=$directory},@{path='relative\wps.exe'},@{path=$rootRelative},@{path=$driveRelative})
+    Write-TestFile (Join-Path $s.root 'processes.json') ($processes|ConvertTo-Json -Compress)
+    $r=Invoke-ControllerTest $s -Action Inspect
+    Assert-True ($r.data.ok -and -not $r.data.applications.wps) 'Only an existing absolute executable file named wps.exe is valid.'
+    $r=Invoke-ControllerTest $s -Hosts Wps
+    Assert-True (-not $r.data.ok -and $r.data.error -eq 'WPS_NOT_FOUND') 'Invalid paths must retain the explicit missing-host error.'
+    Assert-True (-not [IO.Directory]::Exists($s.state) -and (Read-Trace $s) -eq '') 'Invalid process paths must not trigger preparation.'
+  }
+  Test-Case 'Unavailable process discovery does not break application inspection' {
+    $s=New-Scenario;Write-TestFile (Join-Path $s.root 'apps.json') '{}'
+    Write-TestFile (Join-Path $s.root 'process-query-error') ''
+    $r=Invoke-ControllerTest $s -Action Inspect
+    Assert-True ($r.data.ok -and -not $r.data.applications.wps) 'An inaccessible process list should be treated as no discovered WPS.'
+    $r=Invoke-ControllerTest $s -Hosts Wps
+    Assert-True (-not $r.data.ok -and $r.data.error -eq 'WPS_NOT_FOUND') 'Preparation should keep a clear missing-host error.'
+    Assert-True (-not [IO.Directory]::Exists($s.state) -and (Read-Trace $s) -eq '') 'Discovery failure must not alter configuration.'
   }
   Test-Case 'WPS registration preserves unrelated and development entries' {
     $s=New-Scenario; $r=Invoke-ControllerTest $s -Hosts Wps

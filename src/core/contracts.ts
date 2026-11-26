@@ -1,7 +1,29 @@
 export type HostId = 'mock' | 'office' | 'wps';
 export type DocumentKind = 'text' | 'sheet';
-export type Capability = 'selection.read' | 'text.resize' | 'history.undo';
+export type Capability =
+  | 'selection.read'
+  | 'text.resize'
+  | 'text.bold'
+  | 'paragraph.center'
+  | 'paragraph.spacing'
+  | 'paragraph.indent'
+  | 'history.undo';
 export type CellValue = string | number | boolean | null;
+
+export interface ParagraphSnapshot {
+  text: string;
+  alignment: string;
+  /** Office.js uses 12 for single spacing, 18 for 1.5, etc. */
+  lineSpacing: number;
+  /** Only explicit multiple spacing is currently safe to restore through this API. */
+  spacingMode: 'multiple' | 'unsupported';
+  firstLineIndent: number;
+  /** Native hosts may explicitly reject an indent whose original units cannot be restored. */
+  firstLineIndentRestorable?: boolean;
+  leftIndent: number;
+  rightIndent: number;
+  isListItem: boolean;
+}
 
 export interface HostInfo {
   id: HostId;
@@ -21,15 +43,26 @@ export interface SelectionSnapshot {
   revision: string;
   text?: string;
   fontSize?: number;
+  bold?: boolean;
+  paragraphs?: ParagraphSnapshot[];
   values?: CellValue[][];
 }
 
-export type ActionPlan =
-  { type: 'report'; message: string } | { type: 'text.resize'; size: number };
+export type TextActionPlan =
+  | { type: 'text.resize'; size: number }
+  | { type: 'text.bold'; bold: boolean }
+  | { type: 'paragraph.center' }
+  | { type: 'paragraph.spacing'; multiple: number }
+  | { type: 'paragraph.indent'; points: number };
+
+export type ActionPlan = { type: 'report'; message: string } | TextActionPlan;
 
 /** Explicit, safely parsed parameters supplied by the user for a feature. */
 export interface FeatureParameters {
   fontSize?: number;
+  bold?: boolean;
+  lineSpacingMultiple?: number;
+  firstLineIndentPoints?: number;
 }
 
 export interface ChangeReceipt {
@@ -58,6 +91,8 @@ export interface FeatureDefinition {
   kinds: readonly DocumentKind[];
   requires: readonly Capability[];
   phrases: readonly string[];
+  /** A parameterized button focuses the request field instead of inventing a value. */
+  inputPrompt?: { prefix: string; message: string };
   prepare(
     selection: SelectionSnapshot,
     parameters?: FeatureParameters,

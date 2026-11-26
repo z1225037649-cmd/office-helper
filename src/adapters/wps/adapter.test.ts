@@ -8,6 +8,8 @@ interface TextState {
   end: number;
   size: number;
   writes: number[];
+  bold?: number | boolean;
+  boldWrites: (number | boolean | undefined)[];
 }
 
 function setup() {
@@ -17,8 +19,24 @@ function setup() {
     ReadOnly: false,
     ProtectionType: -1,
   };
-  const original: TextState = { text: '活动通知', start: 0, end: 4, size: 18, writes: [] };
-  const other: TextState = { text: '其他内容', start: 10, end: 14, size: 12, writes: [] };
+  const original: TextState = {
+    text: '活动通知',
+    start: 0,
+    end: 4,
+    size: 18,
+    writes: [],
+    bold: 0,
+    boldWrites: [],
+  };
+  const other: TextState = {
+    text: '其他内容',
+    start: 10,
+    end: 14,
+    size: 12,
+    writes: [],
+    bold: 0,
+    boldWrites: [],
+  };
 
   // 每个句柄绑定创建时的文字区域，移动 Selection 不会重定向已经取得的 Duplicate。
   function rangeFor(state: TextState): WpsRange {
@@ -42,6 +60,13 @@ function setup() {
         state.end = end;
       },
       Font: {
+        get Bold() {
+          return state.bold;
+        },
+        set Bold(bold) {
+          state.boldWrites.push(bold);
+          state.bold = bold;
+        },
         get Size() {
           return state.size;
         },
@@ -69,7 +94,7 @@ function setup() {
         return state.end;
       },
       get Font() {
-        return { Size: state.size };
+        return { Size: state.size, Bold: state.bold };
       },
       get Range() {
         return rangeFor(state);
@@ -263,5 +288,177 @@ describe('WPS 字号修改与恢复的安全边界', () => {
     });
     await expect(host.undo(receipt)).rejects.toMatchObject({ code: 'EXPIRED_TASK' });
     expect(original).toMatchObject({ size: 22, writes: [22] });
+  });
+});
+
+describe('WPS 加粗与取消加粗', () => {
+  it.each([
+    [0, false],
+    [-1, true],
+    [false, false],
+    [true, true],
+    [9999999, undefined],
+    [1, undefined],
+    [undefined, undefined],
+  ])('仅将明确的原生粗细 %s 转为 %s', async (raw, expected) => {
+    const { host, original } = setup();
+    original.bold = raw as number | boolean | undefined;
+    expect((await host.readSelection()).bold).toBe(expected);
+  });
+
+  it.each([false, true])('支持改为 %s 并恢复，只写 Bold', async (bold) => {
+    const { host, original } = setup();
+    original.bold = bold ? 0 : -1;
+    const before = await host.readSelection();
+    const receipt = await host.apply({ type: 'text.bold', bold }, before);
+    expect((await host.readSelection()).bold).toBe(bold);
+    await host.undo(receipt);
+    expect((await host.readSelection()).bold).toBe(!bold);
+    expect(original.boldWrites).toEqual(bold ? [-1, 0] : [0, -1]);
+    expect(original.writes).toEqual([]);
+    expect(original.text).toBe(before.text);
+  });
+
+  it('加粗不需要统一字号，也不写字号', async () => {
+    const { host, original } = setup();
+    original.size = 9999999;
+    const receipt = await host.apply({ type: 'text.bold', bold: true }, await host.readSelection());
+    await host.undo(receipt);
+    expect(original.size).toBe(9999999);
+    expect(original.writes).toEqual([]);
+  });
+
+  it.each([9999999, undefined])('粗细未知或混合 %s 时拒绝加粗', async (bold) => {
+    const { host, original } = setup();
+    original.bold = bold;
+    await expect(
+      host.apply({ type: 'text.bold', bold: true }, await host.readSelection()),
+    ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+    expect(original.boldWrites).toEqual([]);
+  });
+
+  it('预览后的粗细变化使旧字号和加粗计划都失效', async () => {
+    const { host, original } = setup();
+    const before = await host.readSelection();
+    original.bold = -1;
+    for (const plan of [
+      { type: 'text.bold', bold: true },
+      { type: 'text.resize', size: 22 },
+    ] as const)
+      await expect(host.apply(plan, before)).rejects.toMatchObject({ code: 'STALE_SELECTION' });
+    expect(original.boldWrites).toEqual([]);
+    expect(original.writes).toEqual([]);
+  });
+
+  it('获取的独立 Range 粗细不同于快照时不写入', async () => {
+    const { host, app, original, rangeFor, selectionFor } = setup();
+    const before = await host.readSelection();
+    const range = rangeFor(original);
+    range.Font = { Size: 18, Bold: -1 };
+    app.Selection = { ...selectionFor(original), Range: range };
+    Object.defineProperty(range, 'Duplicate', { value: range });
+    await expect(host.apply({ type: 'text.bold', bold: true }, before)).rejects.toMatchObject({
+      code: 'STALE_SELECTION',
+    });
+    expect(original.boldWrites).toEqual([]);
+  });
+
+  it('移动选区不影响加粗恢复位置', async () => {
+    const { host, app, original, other, selectionFor } = setup();
+    const receipt = await host.apply({ type: 'text.bold', bold: true }, await host.readSelection());
+    app.Selection = selectionFor(other);
+    await host.readSelection();
+    await host.undo(receipt);
+    expect(original.boldWrites).toEqual([-1, 0]);
+    expect(other.boldWrites).toEqual([]);
+  });
+
+  it.each(['text', 'size', 'bold'] as const)('恢复加粗不会覆盖后来更改的 %s', async (field) => {
+    const { host, original } = setup();
+    const receipt = await host.apply({ type: 'text.bold', bold: true }, await host.readSelection());
+    if (field === 'text') original.text = '新的正文';
+    else if (field === 'size') original.size = 30;
+    else original.bold = 0;
+    await expect(host.undo(receipt)).rejects.toMatchObject({ code: 'STALE_SELECTION' });
+    expect(original.boldWrites).toEqual([-1]);
+  });
+
+  it('换文件拒绝执行与恢复加粗', async () => {
+    const { host, app, document, original } = setup();
+    const before = await host.readSelection();
+    const receipt = await host.apply({ type: 'text.bold', bold: true }, before);
+    app.ActiveDocument = { Name: '另一份.docx', FullName: 'C:/test/另一份.docx' };
+    await expect(host.undo(receipt)).rejects.toMatchObject({ code: 'STALE_SELECTION' });
+    await expect(host.apply({ type: 'text.bold', bold: false }, before)).rejects.toMatchObject({
+      code: 'STALE_SELECTION',
+    });
+    app.ActiveDocument = document;
+    await host.undo(receipt);
+    expect(original.boldWrites).toEqual([-1, 0]);
+  });
+
+  it.each([{ ReadOnly: true }, { ProtectionType: 0 }])(
+    '加粗尊重文档保护 %j',
+    async (protection) => {
+      const { host, document, original } = setup();
+      Object.assign(document, protection);
+      await expect(
+        host.apply({ type: 'text.bold', bold: true }, await host.readSelection()),
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+      expect(original.boldWrites).toEqual([]);
+    },
+  );
+
+  it('无法读取完整段落时拒绝段落格式操作', async () => {
+    const { host, original } = setup();
+    expect(host.info.capabilities).toContain('text.bold');
+    expect(host.info.capabilities).toContain('paragraph.center');
+    for (const plan of [
+      { type: 'paragraph.center' },
+      { type: 'paragraph.spacing', multiple: 1.5 },
+      { type: 'paragraph.indent', points: 24 },
+    ] as const)
+      await expect(host.apply(plan, await host.readSelection())).rejects.toMatchObject({
+        code: 'UNAVAILABLE',
+      });
+    expect(original.boldWrites).toEqual([]);
+  });
+
+  it.each(['text.resize', 'text.bold'] as const)(
+    '插入光标即使返回右侧文字也拒绝 %s',
+    async (type) => {
+      const { host, original } = setup();
+      original.end = original.start;
+      const snapshot = await host.readSelection();
+      expect(snapshot.text).toBe('');
+      await expect(
+        host.apply(type === 'text.resize' ? { type, size: 22 } : { type, bold: true }, snapshot),
+      ).rejects.toMatchObject({ code: 'EMPTY_SELECTION' });
+      expect(original.writes).toEqual([]);
+      expect(original.boldWrites).toEqual([]);
+    },
+  );
+
+  it('部分写入失败不能留下旧恢复凭证', async () => {
+    const { host, app, original, rangeFor, selectionFor } = setup();
+    const previous = await host.apply(
+      { type: 'text.resize', size: 22 },
+      await host.readSelection(),
+    );
+    const range = rangeFor(original);
+    Object.defineProperty(range.Font, 'Bold', {
+      get: () => original.bold,
+      set: (value) => {
+        original.bold = value;
+        throw new Error('bridge failure');
+      },
+    });
+    Object.defineProperty(range, 'Duplicate', { value: range });
+    app.Selection = { ...selectionFor(original), Range: range };
+    await expect(
+      host.apply({ type: 'text.bold', bold: true }, await host.readSelection()),
+    ).rejects.toMatchObject({ code: 'INVALID_PLAN' });
+    await expect(host.undo(previous)).rejects.toMatchObject({ code: 'EXPIRED_TASK' });
+    expect(original.bold).toBe(-1);
   });
 });

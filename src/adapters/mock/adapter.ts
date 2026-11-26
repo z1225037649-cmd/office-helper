@@ -8,6 +8,7 @@ import type {
 } from '../../core/contracts';
 import { HelperError } from '../../core/errors';
 import { assertSameSelection } from '../../core/selection';
+import { projectTextPlan, textPlanMessage, validateTextSelection } from '../../core/text-format';
 
 export class MockAdapter implements HostAdapter {
   readonly info: HostInfo;
@@ -21,7 +22,16 @@ export class MockAdapter implements HostAdapter {
       kind,
       capabilities: [
         'selection.read',
-        ...(kind === 'text' ? (['text.resize', 'history.undo'] as const) : []),
+        ...(kind === 'text'
+          ? ([
+              'text.resize',
+              'text.bold',
+              'paragraph.center',
+              'paragraph.spacing',
+              'paragraph.indent',
+              'history.undo',
+            ] as const)
+          : []),
       ],
     };
     this.snapshot =
@@ -35,6 +45,19 @@ export class MockAdapter implements HostAdapter {
             revision: '0',
             text: '社区活动通知',
             fontSize: 18,
+            bold: false,
+            paragraphs: [
+              {
+                text: '社区活动通知',
+                alignment: 'Left',
+                lineSpacing: 12,
+                spacingMode: 'multiple',
+                firstLineIndent: 0,
+                leftIndent: 0,
+                rightIndent: 0,
+                isListItem: false,
+              },
+            ],
           }
         : {
             documentId: 'demo-costs',
@@ -56,21 +79,13 @@ export class MockAdapter implements HostAdapter {
     expected: SelectionSnapshot,
   ): Promise<ChangeReceipt> {
     assertSameSelection(expected, this.snapshot);
-    if (
-      this.snapshot.kind !== 'text' ||
-      plan.type !== 'text.resize' ||
-      !Number.isFinite(plan.size) ||
-      plan.size < 8 ||
-      plan.size > 72
-    ) {
-      throw new HelperError('INVALID_PLAN', '这个文件暂不支持此操作。');
-    }
+    validateTextSelection(plan, expected);
     const before = structuredClone(this.snapshot);
     const token = crypto.randomUUID();
-    this.snapshot.fontSize = plan.size;
+    this.snapshot = projectTextPlan(this.snapshot, plan);
     this.snapshot.revision = crypto.randomUUID();
     this.restore = { token, before, after: structuredClone(this.snapshot) };
-    return { token, message: `已把选中文字放大到 ${plan.size} 磅。`, canUndo: true };
+    return { token, message: textPlanMessage(plan), canUndo: true };
   }
 
   async undo(receipt: ChangeReceipt): Promise<void> {

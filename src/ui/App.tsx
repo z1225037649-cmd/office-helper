@@ -41,6 +41,10 @@ export function App({
   const [large, setLarge] = useState(false);
   const [hint, setHint] = useState('');
   const previewRef = useRef<HTMLHeadingElement>(null);
+  const previewCardRef = useRef<HTMLElement>(null);
+  const hintRef = useRef<HTMLParagraphElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const isDemo = host.info.id === 'mock';
   const visibleFeatures = registry
     .list()
@@ -62,8 +66,19 @@ export function App({
   }, [host]);
 
   useEffect(() => {
-    if (preview) previewRef.current?.focus();
-  }, [preview]);
+    if (busy) return;
+    const feedback = error
+      ? errorRef.current
+      : preview
+        ? previewCardRef.current
+        : hint
+          ? hintRef.current
+          : result
+            ? resultRef.current
+            : null;
+    if (preview && !error) previewRef.current?.focus({ preventScroll: true });
+    feedback?.scrollIntoView({ block: 'nearest' });
+  }, [busy, error, hint, preview, result]);
 
   async function perform(action: () => Promise<void>) {
     setBusy(true);
@@ -83,6 +98,13 @@ export function App({
       if (preview) runner.cancel(preview.id);
       setPreview(undefined);
       setResult('');
+      const prompt = registry.get(id).inputPrompt;
+      if (prompt) {
+        setInput(prompt.prefix);
+        setHint(prompt.message);
+        document.getElementById('request')?.focus();
+        return;
+      }
       const next = await runner.prepare(id);
       setPreview(next);
       setSelection(await host.readSelection());
@@ -113,7 +135,7 @@ export function App({
         setPreview(await runner.prepare(response.featureId, response.parameters));
         setSelection(await host.readSelection());
       } else if (response.type === 'choices') {
-        setHint('我们一步一步来，请先点下面一个功能。');
+        setHint('我们一步一步来，请一次只说一项要求，并保留具体数值，例如“行距设为1.5倍”。');
       } else if (response.type === 'clarify') {
         setHint(response.message);
       } else {
@@ -209,7 +231,7 @@ export function App({
               </div>
             </form>
             {hint && (
-              <p className="info-message" role="status">
+              <p className="info-message" role="status" ref={hintRef}>
                 <CircleHelp size={18} />
                 {hint}
               </p>
@@ -249,7 +271,7 @@ export function App({
               </div>
             )}
             {preview && (
-              <section className="preview-card" aria-label="操作预览">
+              <section className="preview-card" aria-label="操作预览" ref={previewCardRef}>
                 <span className="eyebrow">先看一眼，再继续</span>
                 <h2 tabIndex={-1} ref={previewRef}>
                   {preview.title}
@@ -275,7 +297,7 @@ export function App({
               </section>
             )}
             {result && (
-              <div className="result-card" role="status">
+              <div className="result-card" role="status" ref={resultRef}>
                 <Check size={22} />
                 <div>
                   <strong>完成了</strong>
@@ -287,7 +309,7 @@ export function App({
               </div>
             )}
             {error && (
-              <div className="error-card" role="alert">
+              <div className="error-card" role="alert" ref={errorRef}>
                 <CircleHelp size={20} />
                 <p>{error}</p>
               </div>

@@ -6,14 +6,17 @@ import type {
   HostAdapter,
   HostInfo,
   SelectionSnapshot,
+  TextActionPlan,
 } from '../../core/contracts';
 import { HelperError } from '../../core/errors';
 import {
   MAX_SELECTION_CELLS,
+  MAX_SELECTION_PARAGRAPHS,
   assertSameSelection,
   assertSelectionLimit,
 } from '../../core/selection';
-import { validateResize } from '../shared/resize';
+import { projectTextPlan, textPlanMessage, validateTextSelection } from '../../core/text-format';
+import { explicitMultipleSpacing } from './spacing';
 
 interface WordTarget {
   id: string;
@@ -22,7 +25,8 @@ interface WordTarget {
 interface WordChange {
   token: string;
   target: WordTarget;
-  beforeSize: number;
+  before: SelectionSnapshot;
+  plan: TextActionPlan;
   after: SelectionSnapshot;
 }
 
@@ -40,13 +44,22 @@ export class OfficeAdapter implements HostAdapter {
       kind,
       capabilities: [
         'selection.read',
-        ...(canWrite && kind === 'text' ? (['text.resize', 'history.undo'] as const) : []),
+        ...(canWrite && kind === 'text'
+          ? ([
+              'text.resize',
+              'text.bold',
+              'paragraph.center',
+              'paragraph.spacing',
+              'paragraph.indent',
+              'history.undo',
+            ] as const)
+          : []),
       ],
       notice:
         kind === 'text'
           ? canWrite
-            ? '先在文档中选中文字，再选择功能。支持恢复本次会话的最后一次字号修改。'
-            : '当前 Office 版本支持读取；字号修改需要 WordApi 1.3。'
+            ? '先在文档中选中文字。段落功能会处理所在的完整段落，每次最多20段；可恢复本次会话的最后一次格式修改。'
+            : '当前 Office 版本支持读取；文字格式修改需要 WordApi 1.3。'
           : '选中要计算的单元格，合计会显示在助手里。',
     };
   }
@@ -108,16 +121,17 @@ export class OfficeAdapter implements HostAdapter {
     expected: SelectionSnapshot,
   ): Promise<ChangeReceipt> {
     this.ensureActive();
-    if (!this.info.capabilities.includes('text.resize') || !this.selection)
-      throw new HelperError('UNAVAILABLE', '当前版本暂不能修改文字大小。');
-    validateResize(plan, expected);
+    if (!this.info.capabilities.includes(plan.type) || !this.selection)
+      throw new HelperError('UNAVAILABLE', '当前版本暂不能执行这个格式操作。');
+    validateTextSelection(plan, expected);
     const target = this.selection;
     return Word.run(target.range, async (context) => {
       const comparison = context.document.getSelection().compareLocationWith(target.range);
       await context.sync();
       if (comparison.value !== Word.LocationRelation.equal)
         throw new HelperError('STALE_SELECTION', '选中的位置变了，请重新预览。');
-      assertSameSelection(expected, await this.snapshot(context, target));
+      const state = await this.readTextState(context, target);
+      assertSameSelection(expected, state.snapshot);
       const undoTarget = {
         id: target.id,
         range: target.range.getRange(Word.RangeLocation.whole).track(),
@@ -127,22 +141,24 @@ export class OfficeAdapter implements HostAdapter {
       if (previous) this.release(previous.target.range);
       let written = false;
       try {
-        target.range.font.size = plan.size;
-        await context.sync();
         written = true;
+        this.writeFormat(target.range, state.paragraphs, plan);
+        await context.sync();
         const after = await this.snapshot(context, undoTarget);
-        if (after.fontSize !== plan.size || after.text !== expected.text)
-          throw new HelperError('INVALID_PLAN', '文档返回的结果与预期不一致，请检查文档。');
+        assertSameSelection(
+          { ...projectTextPlan(expected, plan), revision: after.revision },
+          after,
+        );
         const token = crypto.randomUUID();
-        this.change = { token, target: undoTarget, beforeSize: expected.fontSize!, after };
-        return { token, message: `已把选中文字调整为 ${plan.size} 磅。`, canUndo: true };
+        this.change = { token, target: undoTarget, before: expected, plan, after };
+        return { token, message: textPlanMessage(plan), canUndo: true };
       } catch (error) {
         undoTarget.range.untrack();
         await context.sync().catch(() => undefined);
         if (written)
           throw new HelperError(
             'INVALID_PLAN',
-            '字号可能已修改，但未能完成结果检查，请查看文档并使用 Word 的撤销。',
+            '格式可能已修改，但未能完成结果检查，请查看文档并使用 Word 的撤销。',
           );
         throw error;
       }
@@ -155,13 +171,12 @@ export class OfficeAdapter implements HostAdapter {
     if (!change || change.token !== receipt.token)
       throw new HelperError('EXPIRED_TASK', '这次修改已无法从助手中恢复。');
     await Word.run(change.target.range, async (context) => {
-      assertSameSelection(change.after, await this.snapshot(context, change.target));
-      change.target.range.font.size = change.beforeSize;
+      const state = await this.readTextState(context, change.target);
+      assertSameSelection(change.after, state.snapshot);
+      this.writeFormat(change.target.range, state.paragraphs, change.plan, change.before);
       await context.sync();
-      change.target.range.font.load('size');
-      await context.sync();
-      if (change.target.range.font.size !== change.beforeSize)
-        throw new HelperError('INVALID_PLAN', '恢复结果需要检查，请查看文档。');
+      const restored = await this.snapshot(context, change.target);
+      assertSameSelection({ ...change.before, revision: restored.revision }, restored);
       change.target.range.untrack();
       await context.sync();
     });
@@ -180,8 +195,14 @@ export class OfficeAdapter implements HostAdapter {
     context: Word.RequestContext,
     target: WordTarget,
   ): Promise<SelectionSnapshot> {
+    return (await this.readTextState(context, target)).snapshot;
+  }
+
+  private async readTextState(context: Word.RequestContext, target: WordTarget) {
     target.range.load('text');
     target.range.font.load('size');
+    const writable = this.info.capabilities.includes('text.resize');
+    if (writable) target.range.font.load('bold');
     await context.sync();
     const size = target.range.font.size;
     const snapshot: SelectionSnapshot = {
@@ -194,7 +215,72 @@ export class OfficeAdapter implements HostAdapter {
       fontSize: size > 0 ? size : undefined,
     };
     assertSelectionLimit(snapshot);
-    return snapshot;
+    let paragraphs: Word.Paragraph[] = [];
+    if (writable) {
+      snapshot.bold =
+        typeof target.range.font.bold === 'boolean' ? target.range.font.bold : undefined;
+      const collection = target.range.paragraphs;
+      collection.load('items');
+      await context.sync();
+      if (collection.items.length > MAX_SELECTION_PARAGRAPHS)
+        throw new HelperError('SELECTION_TOO_LARGE', '请缩小范围，每次最多处理20个完整段落。');
+      paragraphs = collection.items;
+      for (const p of paragraphs)
+        p.load([
+          'text',
+          'alignment',
+          'lineSpacing',
+          'firstLineIndent',
+          'leftIndent',
+          'rightIndent',
+          'isListItem',
+        ]);
+      const xml = target.range.getOoxml();
+      await context.sync();
+      const spacing = explicitMultipleSpacing(
+        xml.value,
+        paragraphs.map((p) => p.lineSpacing),
+      );
+      snapshot.paragraphs = paragraphs.map((p, i) => ({
+        text: p.text,
+        alignment: p.alignment,
+        lineSpacing: p.lineSpacing,
+        spacingMode: spacing[i] ? ('multiple' as const) : ('unsupported' as const),
+        firstLineIndent: p.firstLineIndent,
+        leftIndent: p.leftIndent,
+        rightIndent: p.rightIndent,
+        isListItem: p.isListItem,
+      }));
+      snapshot.revision = JSON.stringify([
+        snapshot.text,
+        snapshot.fontSize,
+        snapshot.bold,
+        snapshot.paragraphs,
+      ]);
+      assertSelectionLimit(snapshot);
+    }
+    return { snapshot, paragraphs };
+  }
+
+  /** Only the requested native property is written, including during recovery. */
+  private writeFormat(
+    range: Word.Range,
+    paragraphs: Word.Paragraph[],
+    plan: TextActionPlan,
+    restore?: SelectionSnapshot,
+  ) {
+    if (plan.type === 'text.resize') range.font.size = restore?.fontSize ?? plan.size;
+    else if (plan.type === 'text.bold') range.font.bold = restore?.bold ?? plan.bold;
+    else
+      paragraphs.forEach((paragraph, index) => {
+        const before = restore?.paragraphs?.[index];
+        if (plan.type === 'paragraph.center')
+          paragraph.alignment = (before?.alignment ?? 'Centered') as Word.Alignment;
+        else if (plan.type === 'paragraph.spacing')
+          paragraph.lineSpacing = before?.lineSpacing ?? plan.multiple * 12;
+        else if (plan.type === 'paragraph.indent')
+          paragraph.firstLineIndent = before?.firstLineIndent ?? plan.points;
+      });
   }
   private documentIdentity() {
     const url = Office.context.document.url || '';
