@@ -25,6 +25,14 @@ describe('任务执行边界', () => {
     expect((await host.readSelection()).fontSize).toBe(18);
     expect(runner.canUndo).toBe(false);
   });
+  it('明确字号会进入预览并按指定值执行', async () => {
+    const { host, runner } = setup();
+    const preview = await runner.prepare('text.enlarge', { fontSize: 30 });
+    expect(preview.summary).toContain('30 磅');
+    expect((await host.readSelection()).fontSize).toBe(18);
+    await runner.execute(preview.id);
+    expect((await host.readSelection()).fontSize).toBe(30);
+  });
 
   it('拒绝已取消或重复执行的预览', async () => {
     const { runner } = setup();

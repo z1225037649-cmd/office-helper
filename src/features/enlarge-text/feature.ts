@@ -9,12 +9,12 @@ export const enlargeText: FeatureDefinition = {
   kinds: ['text'],
   requires: ['selection.read', 'text.resize'],
   phrases: ['把字放大', '字体放大', '字大一点', '看不清', '放大文字'],
-  prepare(selection) {
+  prepare(selection, parameters) {
     if (!selection.text?.trim())
       throw new HelperError('EMPTY_SELECTION', '请先在文档里选中想放大的文字。');
     if (!selection.fontSize)
       throw new HelperError('UNAVAILABLE', '这段文字包含不同字号，请先选中字号相同的一段。');
-    const size = Math.min(72, Math.max(18, (selection.fontSize ?? 14) + 4));
+    const size = parameters?.fontSize ?? Math.min(72, Math.max(18, (selection.fontSize ?? 14) + 4));
     if (selection.fontSize === size)
       throw new HelperError('INVALID_PLAN', '文字已经足够大了，这次不需要修改。');
     return {

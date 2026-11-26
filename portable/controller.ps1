@@ -138,12 +138,12 @@ try {
     $name = @{ OpenWord='word'; OpenExcel='excel'; OpenWps='wps' }[$Action]
     $executable = $applications[$name]
     if (-not $executable) { throw 'APPLICATION_NOT_FOUND' }
-    if ($name -eq 'wps') { Start-Process -FilePath $executable -WindowStyle Hidden }
+    if ($name -eq 'wps') { Start-Process -FilePath $executable -WindowStyle Normal }
     else {
       $extension = if ($name -eq 'word') { 'docx' } else { 'xlsx' }
       $sample = Join-Path $StateDirectory "samples\OfficeHelper-Sample.$extension"
       if (-not (Test-Path -LiteralPath $sample)) { throw 'START_HELPER_FIRST' }
-      Start-Process -FilePath $executable -ArgumentList ('"' + $sample + '"') -WindowStyle Hidden
+      Start-Process -FilePath $executable -ArgumentList ('"' + $sample + '"') -WindowStyle Normal
     }
     $result = @{ ok=$true }
   }

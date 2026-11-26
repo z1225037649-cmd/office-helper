@@ -2,6 +2,7 @@ import type {
   ActionPlan,
   ActivityEntry,
   ChangeReceipt,
+  FeatureParameters,
   HostAdapter,
   PreparedTask,
   SelectionSnapshot,
@@ -37,7 +38,7 @@ export class TaskRunner {
     return !!this.receipt?.canUndo;
   }
 
-  async prepare(featureId: string): Promise<PreparedTask> {
+  async prepare(featureId: string, parameters?: FeatureParameters): Promise<PreparedTask> {
     return this.exclusive(async () => {
       const feature = this.registry.get(featureId);
       const reason = this.registry.unavailableReason(feature, this.host.info);
@@ -46,7 +47,7 @@ export class TaskRunner {
       assertSelectionLimit(selection);
       if (!feature.kinds.includes(selection.kind))
         throw new HelperError('UNAVAILABLE', '当前文件类型已改变，请重新打开助手。');
-      const { summary, plan } = feature.prepare(structuredClone(selection));
+      const { summary, plan } = feature.prepare(structuredClone(selection), parameters);
       this.validatePlan(plan);
       const view: PreparedTask = Object.freeze({
         id: crypto.randomUUID(),

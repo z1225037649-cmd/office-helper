@@ -110,10 +110,12 @@ export function App({
       );
       const response = await intent.resolve(input, available);
       if (response.type === 'match') {
-        setPreview(await runner.prepare(response.featureId));
+        setPreview(await runner.prepare(response.featureId, response.parameters));
         setSelection(await host.readSelection());
       } else if (response.type === 'choices') {
         setHint('我们一步一步来，请先点下面一个功能。');
+      } else if (response.type === 'clarify') {
+        setHint(response.message);
       } else {
         setHint('这件事暂时还不会做。你可以先试试下面的功能。');
       }

@@ -22,6 +22,23 @@ describe('功能注册与指令解析', () => {
       type: 'match',
       featureId: 'text.enlarge',
     });
+    expect(await provider.resolve('把字放大到30', features)).toEqual({
+      type: 'match',
+      featureId: 'text.enlarge',
+      parameters: { fontSize: 30 },
+    });
+    expect(await provider.resolve('把字放大到100磅', features)).toMatchObject({
+      type: 'clarify',
+    });
+    expect(await provider.resolve('把字放大到', features)).toMatchObject({
+      type: 'clarify',
+    });
+    expect(await provider.resolve('把字放大一号', features)).toMatchObject({
+      type: 'clarify',
+    });
+    expect(await provider.resolve('把字放大到30厘米', features)).toMatchObject({
+      type: 'clarify',
+    });
     expect(await provider.resolve('把字放大，然后求和', features)).toMatchObject({
       type: 'choices',
     });

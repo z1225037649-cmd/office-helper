@@ -38,9 +38,10 @@ function Remove-HelperCertificate {
 '@
 
 $wrapper=@'
-param([string]$TestRoot,[string]$PackageRoot,[string]$Action,[string]$Hosts,[switch]$AllowTrust)
+param([string]$TestRoot,[string]$PackageRoot,[string]$Action,[string]$Hosts,[switch]$AllowTrust,[switch]$AllowAppLaunch)
 $ErrorActionPreference='Stop'
 $env:HELPER_TEST_ROOT=$TestRoot
+$env:HELPER_TEST_ALLOW_LAUNCH=[string][bool]$AllowAppLaunch
 $env:APPDATA=Join-Path $TestRoot 'roaming'
 $env:LOCALAPPDATA=Join-Path $TestRoot 'local'
 $env:ProgramFiles=Join-Path $TestRoot 'programs'
@@ -89,7 +90,12 @@ function New-Object {
   }
   return Microsoft.PowerShell.Utility\New-Object @PSBoundParameters
 }
-function Start-Process { throw 'Tests must not start real applications.' }
+function Start-Process {
+  [CmdletBinding()]param([string]$FilePath,[string[]]$ArgumentList,[string]$WindowStyle)
+  if($env:HELPER_TEST_ALLOW_LAUNCH -ne 'True'){throw 'Tests must not start real applications.'}
+  $capture=@{filePath=$FilePath;arguments=$ArgumentList;windowStyle=$WindowStyle;windowStyleSpecified=$PSBoundParameters.ContainsKey('WindowStyle')}
+  [IO.File]::WriteAllText((Join-Path $env:HELPER_TEST_ROOT 'launch.json'),($capture|ConvertTo-Json -Compress))
+}
 & (Join-Path $TestRoot 'controller\controller.ps1') -Action $Action -Hosts $Hosts -AllowTrust:$AllowTrust -PackageRoot $PackageRoot -StateDirectory (Join-Path $env:LOCALAPPDATA 'OfficeHelperPortable')
 exit $LASTEXITCODE
 '@
@@ -111,10 +117,11 @@ function New-Scenario {
   return [pscustomobject]@{root=$root;package=$package;publish=$publish;state=(Join-Path $root 'local\OfficeHelperPortable')}
 }
 function Invoke-ControllerTest {
-  param($Scenario,[string]$Action='Prepare',[string]$Hosts='Both',[switch]$AllowTrust,[string]$PackageRoot)
+  param($Scenario,[string]$Action='Prepare',[string]$Hosts='Both',[switch]$AllowTrust,[switch]$AllowAppLaunch,[string]$PackageRoot)
   if(-not $PackageRoot){$PackageRoot=$Scenario.package}
   $arguments=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $Scenario.root 'wrapper.ps1'),'-TestRoot',$Scenario.root,'-PackageRoot',$PackageRoot,'-Action',$Action,'-Hosts',$Hosts)
   if($AllowTrust){$arguments+='-AllowTrust'}
+  if($AllowAppLaunch){$arguments+='-AllowAppLaunch'}
   $output=& powershell.exe @arguments
   $code=$LASTEXITCODE
   try{$result=($output -join "`n")|ConvertFrom-Json}catch{throw ('Controller did not return JSON: '+($output -join ' '))}
@@ -172,6 +179,23 @@ try {
     Assert-True $r.data.ok 'Persisted consent should permit maintenance.'
     $registry=Read-Registry $s
     Assert-True ($registry.$portableId -eq (Join-Path $s.state 'office-manifest.xml') -and $registry.'existing-addon' -eq 'C:\existing.xml') 'Only portable HKCU value should be set.'
+  }
+  Test-Case 'Word and Excel launch their sample documents in visible windows' {
+    foreach($app in @(
+      @{action='OpenWord';name='WINWORD.EXE';sample='OfficeHelper-Sample.docx'},
+      @{action='OpenExcel';name='EXCEL.EXE';sample='OfficeHelper-Sample.xlsx'}
+    )){
+      $s=New-Scenario
+      $prepared=Invoke-ControllerTest $s -Hosts Office -AllowTrust
+      Assert-True $prepared.data.ok 'Office setup for the launch test failed.'
+      $opened=Invoke-ControllerTest $s -Action $app.action -Hosts Office -AllowAppLaunch
+      Assert-True $opened.data.ok ($app.action+' should launch successfully.')
+      $launch=Get-Content -LiteralPath (Join-Path $s.root 'launch.json') -Raw|ConvertFrom-Json
+      $samplePath=Join-Path $s.state ('samples\'+$app.sample)
+      Assert-True ($launch.filePath -eq (Get-Content -LiteralPath (Join-Path $s.root 'apps.json') -Raw|ConvertFrom-Json).$($app.name)) ($app.action+' should use the discovered office application.')
+      Assert-True (($launch.arguments -join ' ') -eq ('"'+$samplePath+'"')) ($app.action+' should pass the quoted portable sample path.')
+      Assert-True ($launch.windowStyleSpecified -and $launch.windowStyle -eq 'Normal') ($app.action+' must show an ordinary application window.')
+    }
   }
   Test-Case 'Remove clears portable ownership only and preserves user files' {
     $s=New-Scenario;$null=Invoke-ControllerTest $s -AllowTrust

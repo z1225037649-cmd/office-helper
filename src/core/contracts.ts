@@ -27,6 +27,11 @@ export interface SelectionSnapshot {
 export type ActionPlan =
   { type: 'report'; message: string } | { type: 'text.resize'; size: number };
 
+/** Explicit, safely parsed parameters supplied by the user for a feature. */
+export interface FeatureParameters {
+  fontSize?: number;
+}
+
 export interface ChangeReceipt {
   token: string;
   message: string;
@@ -53,7 +58,10 @@ export interface FeatureDefinition {
   kinds: readonly DocumentKind[];
   requires: readonly Capability[];
   phrases: readonly string[];
-  prepare(selection: SelectionSnapshot): { summary: string; plan: ActionPlan };
+  prepare(
+    selection: SelectionSnapshot,
+    parameters?: FeatureParameters,
+  ): { summary: string; plan: ActionPlan };
 }
 
 export interface PreparedTask {
