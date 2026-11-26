@@ -1,6 +1,17 @@
 # 宿主接入
 
-这是 Windows 开发机接入说明。Microsoft Word、Excel、WPS 文字和 WPS 表格已完成真实任务窗格的最小验证。成品安装包与生产发布尚未完成，版本及结果见 [验证记录](./verification.md)。
+本页记录源码开发接入。普通试用用户请按 [便携版说明](./portable.md) 解压并双击启动，无需安装 Node.js。Microsoft Word、Excel、WPS 文字和 WPS 表格在开发接入下已完成真实任务窗格最小验证；便携版另有独立验收记录，不能混为同一次测试。详见 [验证记录](./verification.md)。
+
+| 项目           | 源码开发版                                | Windows 便携版                                            |
+| -------------- | ----------------------------------------- | --------------------------------------------------------- |
+| WPS 页面       | HTTP 5173                                 | HTTP 18765                                                |
+| Office 页面    | HTTPS 3443                                | HTTPS 18766                                               |
+| Office 注册 ID | `26b5f5ec-853a-4c06-9c1c-8ac9ea33421a`    | `f5202c69-1f59-4e09-b510-829a3748a31b`                    |
+| WPS 节点       | `OfficeHelperWriter`、`OfficeHelperSheet` | `OfficeHelperPortableWriter`、`OfficeHelperPortableSheet` |
+| Office 证书    | 微软共享开发证书工具管理                  | 本产品专用、当前用户信任的 30 天叶证书                    |
+| 启停与移除     | 下述 npm／PowerShell 命令                 | 启动器内“开始使用”“停止助手”“移除本机配置”                |
+
+两种方式的注册项与证书各自独立。便携版不会卸载微软共享开发 CA；源码开发版的证书卸载命令也不用于移除便携版证书。便携版 Office.js 仍需访问微软 CDN，Office 开发侧载并非商店发布。
 
 ## Microsoft Office
 

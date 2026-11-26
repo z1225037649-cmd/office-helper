@@ -1,6 +1,6 @@
 {
   "name": "office-helper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,6 +11,8 @@
     "dev": "vite --host 127.0.0.1",
     "dev:office": "vite --mode office --host localhost",
     "build": "node scripts/build-wps-entries.mjs && tsc --noEmit && vite build",
+    "build:portable": "npm run build && node scripts/build-portable.mjs",
+    "test:portable": "node --test tests/portable/server.test.mjs && powershell.exe -NoProfile -File tests/portable/certificates.tests.ps1 && powershell.exe -NoProfile -File tests/portable/controller.tests.ps1",
     "setup:office": "node scripts/office-dev.mjs install",
     "remove:office": "node scripts/office-dev.mjs remove",
     "validate:office": "office-addin-manifest validate manifests/office/manifest.xml",
@@ -36,6 +38,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.1.0",
+    "jszip": "^3.10.2",
     "office-addin-dev-certs": "^3.0.1",
     "office-addin-dev-settings": "^4.0.1",
     "office-addin-manifest": "^3.0.1",

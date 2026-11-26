@@ -2,7 +2,13 @@
 
 面向不熟悉电脑的中老年人，在 WPS／Microsoft Office 内提供大按钮、明确的处理范围和操作预览。技术栈为 React + TypeScript + Vite，功能模块与办公软件适配器分开，方便逐个增加功能。
 
-## 启动
+## 便携版使用
+
+Windows 10／11 x64 用户可完整解压 `OfficeHelper-0.2.0-win-x64.zip`，双击文件夹内的启动程序，选择已安装的 WPS 或 Microsoft Office，再点击“开始使用”。包内自带运行时，无需安装 Node.js 或执行 npm 命令；使用时保持启动器运行。
+
+本地构建产物位于 `output/portable/OfficeHelper-0.2.0-win-x64.zip`。首次启用 Office 会说明并请求本机连接证书授权，Windows 也可能弹出信任确认。启动器 WPS 模式和证书生命周期已有实测，便携版 Office 从首次配置到真实任务窗格的完整流程尚未新增实测。使用、迁移和移除步骤见 [便携版说明](docs/portable.md)。当前包未签名，Office 使用开发侧载方式；尚未完成商店发布与自动更新。
+
+## 从源码开发
 
 需要 Node.js 22.12+（推荐 Node 24 LTS）。
 
@@ -32,9 +38,10 @@ npm run preview
 | Microsoft Excel 原生读取与合计             | 真实任务窗格读取四格，合计 450.5 通过             |
 | WPS 表格原生读取与合计                     | 12.1.0.19770 真实任务窗格合计 450.5 通过          |
 | WPS 文字原生字号修改与恢复                 | 12.1.0.19770 真实任务窗格验证 18 → 22 → 18 磅通过 |
-| 语音、大模型、自动保存、安装包、生产部署   | 未实现，后续按需扩展                              |
+| Windows x64 便携 ZIP 与原生启动器          | 已实现；自带运行时、插件注册和专用证书管理        |
+| 语音、大模型、自动保存、自动更新、商店发布 | 未实现，后续按需扩展                              |
 
-Office 实测版本为 Windows x64 16.0.20625.20108；本轮 48 项单元测试、类型检查与生产构建通过。这些结果只覆盖本机测试场景，不代表所有版本和复杂文件均已通过；详见 [验证记录](docs/verification.md)。
+上表四个宿主的原生操作记录来自开发接入实测：Office 为 Windows x64 16.0.20625.20108，WPS 为 12.1.0.19770。便携版新增 25 项测试通过，原有 48 项测试、类型检查和构建也通过；它们不代替便携版完整界面流程及跨版本验收。详见 [验证记录](docs/verification.md)。
 
 合计只读取当前范围的数值类型单元格，结果只显示在助手内；文本数字、空白、布尔值和错误文本不计入并报告数量。隐藏／筛选行和不同宿主的错误值仍需专项验证。浮点计算最多显示 15 位有效数字。最多读取 5,000 个单元格或 20,000 字符。活动记录仅在内存中保留，不含正文；日常功能没有模型请求、遥测和密钥存储。
 
@@ -57,6 +64,8 @@ manifests/            Office 开发清单、WPS 发布配置示例
 tests/unit/           核心执行约束与功能测试
 src/adapters/**/*.test.ts  原生适配器边界回归测试
 scripts/              开发注册、卸载、入口生成与实机验证辅助
+portable/             Windows 启动器、独立静态服务与证书生命周期
+tests/portable/       服务、证书和控制器的隔离测试
 docs/                架构、扩展步骤、宿主接入和开源参考
 ```
 
@@ -64,6 +73,7 @@ docs/                架构、扩展步骤、宿主接入和开源参考
 
 - [架构与约束](docs/architecture.md)
 - [宿主接入及验证清单](docs/host-integration.md)
+- [便携版使用与构建](docs/portable.md)
 - [功能路线图与五人试用计划](docs/product-roadmap.md)
 - [GitHub 参考项目](docs/references.md)
 
@@ -73,6 +83,6 @@ docs/                架构、扩展步骤、宿主接入和开源参考
 - WPS：运行 `npm run setup:wps` 注册，再运行 `npm run dev` 提供 http://127.0.0.1:5173 页面，从“小帮手 → 帮我一下”打开。注册与 `npm run remove:wps` 只处理 `OfficeHelperWriter`、`OfficeHelperSheet` 两个节点；原有配置备份在 `.local/wps-registration-backups/`。
 - `?host=office` 或 `?host=wps&kind=text` / `?host=wps&kind=sheet` 明确要求真实宿主。连接失败会显示错误，绝不自动切换为演示。
 
-以上是开发机接入流程，依赖本地服务；成品安装包、自动更新和生产发布尚未完成。详细操作与限制见 [宿主接入](docs/host-integration.md)。
+以上命令仅用于源码开发；便携版使用独立端口、注册项和专用证书，可与开发版共存。开发接入细节见 [宿主接入](docs/host-integration.md)。
 
 本项目独立编写，参考仓库仅用于结构研究，未整仓复制、运行其安装脚本或导入其业务代码。第三方 npm 依赖的许可证由对应包提供。本项目尚未决定对外发布许可证。
