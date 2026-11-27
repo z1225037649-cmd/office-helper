@@ -44,7 +44,7 @@ export class TaskRunner {
       const feature = this.registry.get(featureId);
       const reason = this.registry.unavailableReason(feature, this.host.info);
       if (reason) throw new HelperError('UNAVAILABLE', reason);
-      const selection = await this.host.readSelection();
+      const selection = await this.host.readSelection(feature.readOptions);
       assertSelectionLimit(selection);
       if (!feature.kinds.includes(selection.kind))
         throw new HelperError('UNAVAILABLE', '当前文件类型已改变，请重新打开助手。');
@@ -82,7 +82,7 @@ export class TaskRunner {
       const reason = this.registry.unavailableReason(feature, this.host.info);
       if (reason) throw new HelperError('UNAVAILABLE', reason);
       this.validatePlan(task.plan);
-      assertSameSelection(task.selection, await this.host.readSelection());
+      assertSameSelection(task.selection, await this.host.readSelection(feature.readOptions));
       let message: string;
       if (task.plan.type === 'report') {
         message = task.plan.message;

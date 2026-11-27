@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 export async function prepareWpsNative() {
   const token = (await readFile('.local/native-token', 'utf8')).trim();
+  const check = process.argv.includes('--sheet-average') ? '&check=sheet-average' : '';
   await writeFile(
     '.local/wps-native-test/main.js',
     `(function(){
@@ -23,7 +24,7 @@ export async function prepareWpsNative() {
       try { doc = app.ActiveWorkbook; if(doc) kind = 'sheet'; } catch(e){}
       if(!doc) { try { doc = app.ActiveDocument; } catch(e){} }
       if(!doc || !/^OfficeHelper-Native-Test\\.(docx|xlsx)$/.test(doc.Name) || pane) return;
-      var created = paneHost.CreateTaskPane('http://127.0.0.1:5173/native-check.html?host=wps&kind='+kind+'&token=${token}');
+      var created = paneHost.CreateTaskPane('http://127.0.0.1:5173/native-check.html?host=wps&kind='+kind+'&token=${token}${check}');
       pane = typeof created === 'number' || typeof created === 'string' ? paneHost.GetTaskPane(created) : created;
       pane.Width=400; pane.Visible=true;
       report('pane-opened',kind);

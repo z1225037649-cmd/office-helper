@@ -154,7 +154,9 @@ try {
       $extension = if ($name -eq 'word') { 'docx' } else { 'xlsx' }
       $sample = Join-Path $StateDirectory "samples\OfficeHelper-Sample.$extension"
       if (-not (Test-Path -LiteralPath $sample)) { throw 'START_HELPER_FIRST' }
-      Start-Process -FilePath $executable -ArgumentList ('"' + $sample + '"') -WindowStyle Normal
+      # /x limits Word's DDE startup and creates a separate Excel instance.
+      # Keep the sample visible without touching existing Office processes.
+      Start-Process -FilePath $executable -ArgumentList @('/x', ('"' + $sample + '"')) -WindowStyle Normal
     }
     $result = @{ ok=$true }
   }

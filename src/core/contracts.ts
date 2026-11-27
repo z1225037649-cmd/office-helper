@@ -9,6 +9,12 @@ export type Capability =
   | 'paragraph.indent'
   | 'history.undo';
 export type CellValue = string | number | boolean | null;
+export type CellType = 'empty' | 'number' | 'text' | 'boolean' | 'error' | 'unknown';
+
+/** Extra native reads are opt-in so ordinary selection and sum keep their existing path. */
+export interface SelectionReadOptions {
+  includeCellTypes?: boolean;
+}
 
 export interface ParagraphSnapshot {
   text: string;
@@ -46,6 +52,10 @@ export interface SelectionSnapshot {
   bold?: boolean;
   paragraphs?: ParagraphSnapshot[];
   values?: CellValue[][];
+  /** Native cell types distinguish spreadsheet errors from text or numeric error codes. */
+  cellTypes?: CellType[][];
+  /** All cells in a contiguous range, including hidden and filtered rows. */
+  rowScope?: 'all';
 }
 
 export type TextActionPlan =
@@ -73,7 +83,7 @@ export interface ChangeReceipt {
 
 export interface HostAdapter {
   readonly info: HostInfo;
-  readSelection(): Promise<SelectionSnapshot>;
+  readSelection(options?: SelectionReadOptions): Promise<SelectionSnapshot>;
   /** 原生适配器必须在写入前再次核对目标和快照，拒绝过期任务。 */
   apply(
     plan: Exclude<ActionPlan, { type: 'report' }>,
@@ -91,6 +101,7 @@ export interface FeatureDefinition {
   kinds: readonly DocumentKind[];
   requires: readonly Capability[];
   phrases: readonly string[];
+  readOptions?: SelectionReadOptions;
   /** A parameterized button focuses the request field instead of inventing a value. */
   inputPrompt?: { prefix: string; message: string };
   prepare(

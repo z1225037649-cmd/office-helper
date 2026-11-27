@@ -1,6 +1,6 @@
 # 宿主接入
 
-本页记录源码开发接入。普通试用用户请按 [便携版说明](./portable.md) 解压并双击启动，无需安装 Node.js。Microsoft Word、Excel、WPS 文字和 WPS 表格在开发接入下已完成真实任务窗格最小验证；便携版另有独立验收记录，不能混为同一次测试。详见 [验证记录](./verification.md)。
+本页记录源码开发接入。普通试用用户请按 [便携版说明](./portable.md) 解压并双击启动，无需安装 Node.js。WPS 平均值已在本机12.1.0.19770开发任务窗格实机验收；Office适配器已实现但本机受登录／产品授权提示阻挡，未实机验收。便携ZIP尚未重打包该功能。其他宿主仍按各自记录判定；详见 [验证记录](./verification.md)。
 
 | 项目           | 源码开发版                                | Windows 便携版                                            |
 | -------------- | ----------------------------------------- | --------------------------------------------------------- |
@@ -16,7 +16,7 @@
 ## Microsoft Office
 
 1. 安装依赖：`npm ci`。
-2. 前期Office接入环境曾获用户授权，通过微软 `office-addin-dev-certs` 安装30天开发证书；当前机器未检测到Word／Excel，不能据此认定已配置。具备Office的开发机需先完成该机的开发证书安装与信任。证书文件位于对应用户的 `.office-addin-dev-certs` 目录；`npm run dev:office` 读取其中的 `localhost.key` 和 `localhost.crt`。
+2. 前期Office接入环境曾获用户授权，通过微软 `office-addin-dev-certs` 安装30天开发证书。新设备已检测到Word／Excel，但该机开发证书不受信任，不能据历史记录或便携证书状态认定开发接入已配置；需单独检查开发证书及信任。证书文件位于对应用户的 `.office-addin-dev-certs` 目录；`npm run dev:office` 读取其中的 `localhost.key` 和 `localhost.crt`。
 3. 运行 `npm run setup:office` 注册 `manifests/office/manifest.xml`，并生成 `output/samples/OfficeHelper-Sample.docx`、`OfficeHelper-Sample.xlsx`。已有同名试用文件会保留，避免覆盖试用内容。
 4. 运行 `npm run dev:office`，保持 https://localhost:3443 服务运行。
 5. 用 Word／Excel 打开相应试用文件，从加载项入口使用侧边栏。Word 先选中文字，再预览并确认字号修改；Excel 选中金额区域查看合计。
@@ -35,7 +35,7 @@
 
 1. 运行 `npm run setup:wps` 生成文字／表格入口并注册开发加载项。
 2. 运行 `npm run dev`，保持 http://127.0.0.1:5173 服务运行。
-3. 打开 WPS，使用“小帮手 → 帮我一下”。若之前已运行 WPS，保存自己的工作后重新启动，以加载更新的注册。文字端先选中文字测试放大、加粗／取消加粗，以及普通正文段落居中、倍数行距、首行缩进与恢复，表格端选中金额查看合计。首次加载信任提示由用户自行确认。
+3. 打开 WPS，使用“小帮手 → 帮我一下”。若之前已运行 WPS，保存自己的工作后重新启动，以加载更新的注册。文字端先选中文字测试放大、加粗／取消加粗，以及普通正文段落居中、倍数行距、首行缩进与恢复。表格端选中区域查看合计或平均值；平均值只计数值单元格，文字／空白／布尔值说明后忽略，错误单元格则拒绝计算，结果只显示在助手中并包含所选隐藏／筛选行。首次加载信任提示由用户自行确认。
 
 两个入口分别为 `/wps/writer/`、`/wps/sheet/`，共用侧边栏分别带 `?host=wps&kind=text`、`?host=wps&kind=sheet`。`CreateTaskPane` 返回任务窗格对象或句柄时，入口分别处理；若返回句柄，再调用 `GetTaskPane`。
 
@@ -47,7 +47,7 @@ WPS 12.1.0.19770 的文字与表格基础链路为历史通过记录；本轮当
 
 浏览器直接打开开发服务首页使用内存演示文件；真实用户从办公软件内打开助手。显式请求 Office／WPS 宿主但连接失败时显示错误，不回退演示。
 
-`output/samples/` 是正常试用文件；`output/native/OfficeHelper-Native-Test.docx`、`.xlsx` 和 `native-check.html` 是开发者诊断专用。`npm run prepare:native` 生成独立测试清单和测试文件；报告通道需要本地测试令牌，结果写入 `output/native/results.jsonl`，不用于日常产品流程。
+`output/samples/` 是正常试用文件；`output/native/OfficeHelper-Native-Test.docx`、`.xlsx` 和 `native-check.html` 是开发者诊断专用。`npm run prepare:native` 生成一般诊断样本；`node scripts/prepare-native-check.mjs --sheet-average` 为Excel生成平均值专项清单；该专项也准备WPS测试任务窗格，供 WPS 专用 `.xlsx` 使用。它严格要求专用文件名、A1标记及选区B2:B5四个固定数字，并逐步重读原生选区／工作表；只报告平均值与原有合计，不写入表格。报告通道需要本地测试令牌，结果写入 `output/native/results.jsonl`，不用于日常产品流程。
 
 重跑原生测试时，先关闭上次的专用测试文件并停止开发服务，然后生成测试入口，使用 `npx office-addin-dev-settings register .local/office-native-check.xml` 与 `powershell.exe -NoProfile -File scripts/register-wps.ps1 -Action Test` 切换开发注册。在两个服务终端分别设置 `$env:HELPER_NATIVE_TEST_TOKEN = (Get-Content .local/native-token -Raw).Trim()`，再启动 Office／WPS 服务。可在宿主界面手动选中专用标记或 B2:B5；诊断页最多等待选区约5分钟。仓库也保留 `scripts/test-office-native.ps1`、`scripts/test-wps-native.ps1` 作为开发者辅助脚本，Office 脚本若发现 COM 指向 WPS 会停止，需要先明确启动微软程序。本轮 WPS 验证使用界面选区，未运行这两个辅助脚本。测试页只有文件名和内容标记均匹配时才修改字号并恢复；WPS 文字还会测试加粗、取消加粗和各自恢复，最终还原原始粗细。首次加载信任提示必须由用户操作。
 
@@ -57,7 +57,9 @@ WPS 12.1.0.19770 的文字与表格基础链路为历史通过记录；本轮当
 
 Word 新增格式使用独立专项：运行 `node scripts/prepare-native-check.mjs --word-format`，生成 `.local/office-word-format-check.xml` 与 `output/native/word-format/OfficeHelper-Native-Test.docx`，不会重写正在使用的 WPS 样本或更换已有测试令牌。样本三段初始行距为1／1.5／2倍，首行缩进为0／12／−12磅，且左右缩进各不相同；诊断必须核对正文及这些原始格式后才修改。使用携带本地测试令牌的HTTPS开发服务，在真实Word中打开该样本并侧载专项清单，选中完整三段正文。诊断覆盖字号、加粗／取消加粗、居中、倍数行距、首行缩进、取消与恢复，以及部分选字、选区变化、过期预览、恢复冲突和插入光标拒绝；只有 `word-format-passed` 且 `restored:true` 才计为专项通过，普通 `passed` 的 `coverage:font-size-only` 不覆盖这些功能。
 
-2026-11-27本机无可用桌面Word，桌面授权未确认。用户已授权上传专用DOCX及测试清单；实际DOCX已上传Word网页版，阅读成功，编辑初始化失败，清单尚未上传、专项未运行。成功标准需同时有 `word-format-cleanup-verified`、`word-format-passed` 且 `restored:true`，目前均无记录。本轮HTTPS证书仅在工作区 `.local/word-format-certs/` 生成，有效期7天，未安装到系统信任库；临时配置为 `.local/word-format.vite.config.ts`。浏览器信任提示仍需用户本人处理。用户已决定暂缓Word新格式及便携Office完整流程验收，换设备续做；新设备须重新生成本机证书和测试文件，不迁移私钥或令牌。网页编辑失败可用移除自动加载项关联的相同正文DOCX隔离排查，尚未确定原因。
+前一设备在2026-11-27无可用桌面Word，桌面授权未确认。用户已授权上传专用DOCX及测试清单；实际DOCX已上传Word网页版，阅读成功，编辑初始化失败，清单尚未上传、专项未运行。成功标准需同时有 `word-format-cleanup-verified`、`word-format-passed` 且 `restored:true`，目前均无记录。当时HTTPS证书仅在工作区 `.local/word-format-certs/` 生成，有效期7天，未安装到系统信任库；临时配置为 `.local/word-format.vite.config.ts`。网页编辑失败可用移除自动加载项关联的相同正文DOCX隔离排查，尚未确定原因。
+
+同日换设备续做，已检测到Word／Excel `16.0.20625.20108`。本机已有便携证书有效且受信任，已复用于18766打包服务检查，没有重新安装或迁移私钥。开发3443证书不受信任，不能与便携配置混同。Office `/x` 专用样本启动可见窗口试验已有结果，但 Office 登录／授权提示仍阻挡新加载项测试；该限制不影响 WPS 表格平均值专项通过。
 
 测试结束只对本次切换过的宿主恢复正常注册（Office 使用 `npm run setup:office`，WPS 使用 `npm run setup:wps`）；移除服务终端的 `HELPER_NATIVE_TEST_TOKEN` 环境变量并重启服务。生产构建不包含诊断页面。
 

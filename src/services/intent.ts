@@ -117,6 +117,36 @@ function indentIntent(input: string, featureId: string): IntentResult {
   };
 }
 
+function averageIntent(input: string, featureId: string): IntentResult {
+  let request = input;
+  // Consume a bounded number of courtesy tokens and exactly one target. Repeated,
+  // overlapping target alternatives must never enter an unbounded backtracking regex.
+  for (let i = 0; i < 4; i++) {
+    const prefix = request.match(/^(?:请|你|帮我|帮忙|麻烦|把|将|给我|给|先)/)?.[0];
+    if (!prefix) break;
+    request = request.slice(prefix.length);
+  }
+  const operationPattern = /^(?:计算一下|查看一下|算一下|求一下|看看一下|计算|查看|看看|算|求)/;
+  const targetPattern =
+    /^(?:(?:当前|所)?选中(?:的)?(?:范围|单元格|数字|数据|金额)?|选区|当前范围|这些(?:单元格|数字|数据|金额)?|单元格|范围|数字|数据|金额)(?:的)?/;
+  let operation = request.match(operationPattern)?.[0];
+  if (operation) request = request.slice(operation.length);
+  const target = request.match(targetPattern)?.[0];
+  if (target) request = request.slice(target.length);
+  if (!operation) {
+    operation = request.match(operationPattern)?.[0];
+    if (operation) request = request.slice(operation.length);
+  }
+  if (
+    !/^(?:平均值|平均数)(?:一下|显示)?$/.test(request) &&
+    !(operation === '求' && /^平均(?:一下|显示)?$/.test(request))
+  )
+    return clarify(
+      '请单独说“算一下选中范围的平均值”。本版包含隐藏和筛选行，不支持只算可见行、指定结果数值或写回单元格。',
+    );
+  return { type: 'match', featureId };
+}
+
 export class LocalIntentProvider implements IntentProvider {
   async resolve(
     input: string,
@@ -148,6 +178,8 @@ export class LocalIntentProvider implements IntentProvider {
       return clarify('请一次只说一个操作和一个目标数值，例如“行距设为 1.5 倍”。');
 
     switch (feature.id) {
+      case 'sheet.average':
+        return averageIntent(normalized, feature.id);
       case 'text.enlarge':
         return fontSizeIntent(normalized, feature.id);
       case 'paragraph.spacing':

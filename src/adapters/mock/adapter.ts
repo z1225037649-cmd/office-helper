@@ -4,6 +4,7 @@ import type {
   DocumentKind,
   HostAdapter,
   HostInfo,
+  SelectionReadOptions,
   SelectionSnapshot,
 } from '../../core/contracts';
 import { HelperError } from '../../core/errors';
@@ -70,8 +71,23 @@ export class MockAdapter implements HostAdapter {
           };
   }
 
-  async readSelection(): Promise<SelectionSnapshot> {
-    return structuredClone(this.snapshot);
+  async readSelection(options?: SelectionReadOptions): Promise<SelectionSnapshot> {
+    const snapshot = structuredClone(this.snapshot);
+    if (snapshot.kind === 'sheet' && options?.includeCellTypes) {
+      snapshot.rowScope = 'all';
+      snapshot.cellTypes = snapshot.values?.map((row) =>
+        row.map((value) =>
+          value === null
+            ? 'empty'
+            : typeof value === 'number'
+              ? 'number'
+              : typeof value === 'boolean'
+                ? 'boolean'
+                : 'text',
+        ),
+      );
+    }
+    return snapshot;
   }
 
   async apply(

@@ -7,6 +7,7 @@ export const appConfig = {
     'paragraph.spacing': true,
     'paragraph.indent': true,
     'sheet.sum': true,
+    'sheet.average': true,
     'selection.inspect': true,
   } satisfies Record<string, boolean>,
 };

@@ -17,6 +17,9 @@ export class FeatureRegistry {
           kinds: Object.freeze([...definition.kinds]),
           requires: Object.freeze([...definition.requires]),
           phrases: Object.freeze([...definition.phrases]),
+          readOptions: definition.readOptions
+            ? Object.freeze({ ...definition.readOptions })
+            : undefined,
         }),
       );
     }

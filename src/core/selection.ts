@@ -16,6 +16,8 @@ export function selectionKey(selection: SelectionSnapshot): string {
     selection.bold,
     selection.paragraphs,
     selection.values,
+    selection.cellTypes,
+    selection.rowScope,
   ]);
 }
 

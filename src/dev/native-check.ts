@@ -6,6 +6,7 @@ import { readWpsParagraphs } from '../adapters/wps/paragraphs';
 import type { HostAdapter } from '../core/contracts';
 import { checkWpsFormats } from './wps-format-check';
 import { checkWordFormats } from './word-format-check';
+import { checkSheetAverage } from './sheet-average-check';
 
 const paragraphFixture = 'OFFICE_HELPER_NATIVE_TEST\r第二段：居中验收\r第三段：保持原样';
 
@@ -172,6 +173,10 @@ async function run() {
     await report('claim', {
       run: `${hostName}:${selection.kind}:${params.get('run') ?? params.get('check') ?? 'default'}`,
     });
+    if (params.get('check') === 'sheet-average') {
+      await checkSheetAverage(adapter, report);
+      return;
+    }
     if (hostName === 'wps' && selection.kind === 'text') {
       const app = getWpsApplication('text');
       const range = app.Selection?.Range;

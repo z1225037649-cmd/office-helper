@@ -10,7 +10,14 @@ export interface WpsSelection {
   Columns?: { Count: number };
   Address?: string | (() => string);
   Value2?: CellValue | CellValue[][];
+  Areas?: { Count: number };
+  Cells?: { Item(row: number, column: number): WpsSheetCell };
   Range?: WpsRange;
+}
+
+/** Minimal native cell handle; it stays inside the WPS adapter. */
+export interface WpsSheetCell {
+  Value2?: CellValue;
 }
 
 export interface WpsDocument {
@@ -63,6 +70,7 @@ export interface WpsApplication {
   ActiveWorkbook?: { Name: string; FullName?: string };
   ActiveSheet?: { Name: string };
   Selection?: WpsSelection;
+  WorksheetFunction?: { IsError(cell: WpsSheetCell): boolean | number };
   ActiveWindow?: { Hwnd?: number };
 }
 

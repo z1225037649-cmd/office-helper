@@ -1,10 +1,12 @@
 import type {
   ActionPlan,
+  CellType,
   CellValue,
   ChangeReceipt,
   DocumentKind,
   HostAdapter,
   HostInfo,
+  SelectionReadOptions,
   SelectionSnapshot,
   TextActionPlan,
 } from '../../core/contracts';
@@ -28,6 +30,29 @@ interface WordChange {
   before: SelectionSnapshot;
   plan: TextActionPlan;
   after: SelectionSnapshot;
+}
+
+function readCellTypes(value: unknown): CellType[][] | undefined {
+  if (!Array.isArray(value) || value.some((row) => !Array.isArray(row))) return undefined;
+  return value.map((row: unknown[]) =>
+    row.map((type): CellType => {
+      switch (type) {
+        case 'Empty':
+          return 'empty';
+        case 'String':
+          return 'text';
+        case 'Integer':
+        case 'Double':
+          return 'number';
+        case 'Boolean':
+          return 'boolean';
+        case 'Error':
+          return 'error';
+        default:
+          return 'unknown';
+      }
+    }),
+  );
 }
 
 export class OfficeAdapter implements HostAdapter {
@@ -60,11 +85,11 @@ export class OfficeAdapter implements HostAdapter {
           ? canWrite
             ? '先在文档中选中文字。段落功能会处理所在的完整段落，每次最多20段；可恢复本次会话的最后一次格式修改。'
             : '当前 Office 版本支持读取；文字格式修改需要 WordApi 1.3。'
-          : '选中要计算的单元格，合计会显示在助手里。',
+          : '选中要计算的单元格，合计或平均值会显示在助手里。',
     };
   }
 
-  async readSelection(): Promise<SelectionSnapshot> {
+  async readSelection(options: SelectionReadOptions = {}): Promise<SelectionSnapshot> {
     this.ensureActive();
     if (this.info.kind === 'text') {
       if (!this.info.capabilities.includes('text.resize')) {
@@ -103,7 +128,7 @@ export class OfficeAdapter implements HostAdapter {
           'SELECTION_TOO_LARGE',
           '请只选中要计算的部分，最多支持 5,000 个单元格。',
         );
-      range.load('values');
+      range.load(options.includeCellTypes ? ['values', 'valueTypes'] : 'values');
       await context.sync();
       return {
         ...this.documentIdentity(),
@@ -112,6 +137,9 @@ export class OfficeAdapter implements HostAdapter {
         targetLabel: range.address,
         revision: JSON.stringify(range.values),
         values: range.values as CellValue[][],
+        ...(options.includeCellTypes
+          ? { cellTypes: readCellTypes(range.valueTypes), rowScope: 'all' as const }
+          : {}),
       };
     });
   }

@@ -6,12 +6,14 @@ import { OfficeAddinManifest, OfficeApp } from 'office-addin-manifest';
 import JSZip from 'jszip';
 
 const wordFormatOnly = process.argv.includes('--word-format');
+const sheetAverageOnly = process.argv.includes('--sheet-average');
 await mkdir('.local', { recursive: true });
 await mkdir('output/native', { recursive: true });
 // A focused fixture regeneration must not invalidate an active WPS test session.
-const previousToken = wordFormatOnly
-  ? await readFile('.local/native-token', 'utf8').catch(() => '')
-  : '';
+const previousToken =
+  wordFormatOnly || sheetAverageOnly
+    ? await readFile('.local/native-token', 'utf8').catch(() => '')
+    : '';
 const token = /^[a-f0-9]{48}$/.test(previousToken.trim())
   ? previousToken.trim()
   : randomBytes(24).toString('hex');
@@ -88,6 +90,15 @@ async function prepareWordFormat() {
   console.log('Word专项URL：.local/word-format-check-url.txt（须在真实Word任务窗格运行）');
 }
 
+async function prepareSheetAverage() {
+  const manifestPath = '.local/office-sheet-average-check.xml';
+  const url = `${nativeUrl}&check=sheet-average`;
+  await writeFile(manifestPath, testManifest(url));
+  await writeFile('.local/sheet-average-check-url.txt', url + '\n');
+  console.log(`表格平均值专项清单：${manifestPath}`);
+  console.log('表格平均值专项URL：.local/sheet-average-check-url.txt（须在真实Excel任务窗格运行）');
+}
+
 if (!wordFormatOnly) {
   await writeFile('.local/native-token', token);
   await writeFile('.local/office-native-check.xml', testManifest(nativeUrl));
@@ -107,7 +118,13 @@ if (!wordFormatOnly) {
     '.local/wps-native-test/index.html',
     '<!doctype html><html><head><meta charset="UTF-8"></head><body><script src="main.js"></script></body></html>',
   );
-  await import('./prepare-wps-native.mjs');
 }
-await prepareWordFormat();
+if (wordFormatOnly) await prepareWordFormat();
+if (sheetAverageOnly) {
+  await prepareSheetAverage();
+  await import('./prepare-wps-average-fixture.mjs').then((module) =>
+    module.prepareWpsAverageFixture(),
+  );
+}
+if (!wordFormatOnly) await import('./prepare-wps-native.mjs');
 console.log('已生成独立测试文件和本地测试入口；未启动宿主或执行实机验收。');

@@ -86,8 +86,9 @@ for (const dependency of [
   }
 }
 const original = await readFile('manifests/office/manifest.xml', 'utf8');
+// Office requires manifest versions >= 1.0, even for a 0.x product release.
 const portableManifest = original
-  .replace(/<Version>[^<]+<\/Version>/, `<Version>${pkg.version}.0</Version>`)
+  .replace(/<Version>[^<]+<\/Version>/, `<Version>1.${pkg.version}</Version>`)
   .replaceAll('26b5f5ec-853a-4c06-9c1c-8ac9ea33421a', 'f5202c69-1f59-4e09-b510-829a3748a31b')
   .replaceAll('localhost:3443', 'localhost:18766')
   .replace('办公小帮手（开发版）', '办公小帮手（便携试用版）')

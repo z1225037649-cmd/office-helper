@@ -3,6 +3,7 @@ import type {
   CellValue,
   ChangeReceipt,
   DocumentKind,
+  SelectionReadOptions,
   SelectionSnapshot,
   TextActionPlan,
 } from '../../core/contracts';
@@ -16,6 +17,7 @@ import { ReadOnlyAdapter } from '../shared/read-only-adapter';
 import { getWpsApplication, type WpsApplication, type WpsRange } from './bridge';
 import { validateResize } from '../shared/resize';
 import { textPlanMessage, validateTextSelection } from '../../core/text-format';
+import { readWpsSheetDetails } from './sheet-details';
 import {
   projectedParagraphRevision,
   readWpsParagraphs,
@@ -80,11 +82,11 @@ export class WpsAdapter extends ReadOnlyAdapter {
       notice:
         kind === 'text'
           ? '先选中文字。支持字号、加粗、普通正文居中、倍数行距和首行缩进；段落操作处理所在完整段落，每次最多20段，可恢复最后一次格式修改。'
-          : '选中要计算的单元格，合计会显示在助手里。',
+          : '选中要计算的单元格，合计或平均值会显示在助手里。',
     });
   }
 
-  async readSelection(): Promise<SelectionSnapshot> {
+  async readSelection(options?: SelectionReadOptions): Promise<SelectionSnapshot> {
     this.ensureActive();
     const app = this.getApplication();
     const doc = this.info.kind === 'text' ? app.ActiveDocument : app.ActiveWorkbook;
@@ -135,6 +137,8 @@ export class WpsAdapter extends ReadOnlyAdapter {
     else throw new HelperError('UNAVAILABLE', '当前选区数据格式暂不支持，请换一段连续的单元格。');
     if (values.length !== rows || values.some((row) => row.length !== columns))
       throw new HelperError('UNAVAILABLE', '读取的单元格数量不完整，请重新选择范围。');
+    // Some native bridges reuse their returned arrays; detailed probes need a fixed value snapshot.
+    if (options?.includeCellTypes) values = values.map((row) => [...row]);
     const address =
       typeof selection.Address === 'function' ? selection.Address() : selection.Address;
     if (!address) throw new HelperError('UNAVAILABLE', '未能确认选中的位置，请重新选择范围。');
@@ -144,6 +148,7 @@ export class WpsAdapter extends ReadOnlyAdapter {
       targetLabel: address,
       revision: JSON.stringify(values),
       values,
+      ...(options?.includeCellTypes ? readWpsSheetDetails(selection, app, values) : {}),
     };
   }
 

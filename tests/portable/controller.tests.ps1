@@ -4,6 +4,7 @@
 $ErrorActionPreference='Stop'
 $controllerSource=Join-Path $PSScriptRoot '..\..\portable\controller.ps1'
 $controllerText=[IO.File]::ReadAllText($controllerSource)
+$sampleHelperText=[IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\..\scripts\open-office-samples.ps1'))
 $testRoot=Join-Path $env:TEMP ('OfficeHelperControllerTests-'+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($testRoot)
 $script:passed=0
@@ -108,8 +109,22 @@ function Start-Process {
   $capture=@{filePath=$FilePath;arguments=$ArgumentList;windowStyle=$WindowStyle;windowStyleSpecified=$PSBoundParameters.ContainsKey('WindowStyle')}
   [IO.File]::WriteAllText((Join-Path $env:HELPER_TEST_ROOT 'launch.json'),($capture|ConvertTo-Json -Compress))
 }
+function Stop-Process { throw 'Opening a sample must not stop existing application processes.' }
 & (Join-Path $TestRoot 'controller\controller.ps1') -Action $Action -Hosts $Hosts -AllowTrust:$AllowTrust -PackageRoot $PackageRoot -StateDirectory (Join-Path $env:LOCALAPPDATA 'OfficeHelperPortable')
 exit $LASTEXITCODE
+'@
+
+$sampleHelperWrapper=@'
+param([string]$TestRoot,[ValidateSet('Word','Excel')][string]$App)
+$ErrorActionPreference='Stop'
+$env:ProgramFiles=Join-Path $TestRoot 'programs'
+function Start-Process {
+  [CmdletBinding()]param([string]$FilePath,[string[]]$ArgumentList,[string]$WindowStyle)
+  $capture=@{filePath=$FilePath;arguments=$ArgumentList;windowStyle=$WindowStyle;windowStyleSpecified=$PSBoundParameters.ContainsKey('WindowStyle')}
+  [IO.File]::WriteAllText((Join-Path $TestRoot 'helper-launch.json'),($capture|ConvertTo-Json -Compress))
+}
+function Stop-Process { throw 'Opening a sample must not stop existing application processes.' }
+& (Join-Path $TestRoot 'helper project\scripts\open-office-samples.ps1') -App $App
 '@
 
 function New-Scenario {
@@ -248,7 +263,7 @@ try {
     $registry=Read-Registry $s
     Assert-True ($registry.$portableId -eq (Join-Path $s.state 'office-manifest.xml') -and $registry.'existing-addon' -eq 'C:\existing.xml') 'Only portable HKCU value should be set.'
   }
-  Test-Case 'Word and Excel launch their sample documents in visible windows' {
+  Test-Case 'Word and Excel launch visible samples without reusing a hidden Office window' {
     foreach($app in @(
       @{action='OpenWord';name='WINWORD.EXE';sample='OfficeHelper-Sample.docx'},
       @{action='OpenExcel';name='EXCEL.EXE';sample='OfficeHelper-Sample.xlsx'}
@@ -261,8 +276,37 @@ try {
       $launch=Get-Content -LiteralPath (Join-Path $s.root 'launch.json') -Raw|ConvertFrom-Json
       $samplePath=Join-Path $s.state ('samples\'+$app.sample)
       Assert-True ($launch.filePath -eq (Get-Content -LiteralPath (Join-Path $s.root 'apps.json') -Raw|ConvertFrom-Json).$($app.name)) ($app.action+' should use the discovered office application.')
-      Assert-True (($launch.arguments -join ' ') -eq ('"'+$samplePath+'"')) ($app.action+' should pass the quoted portable sample path.')
+      Assert-True ($launch.arguments.Count -eq 2 -and $launch.arguments[0] -eq '/x' -and $launch.arguments[1] -eq ('"'+$samplePath+'"')) ($app.action+' must pass only /x and the quoted portable sample path; multiple Office switches are unsupported.')
       Assert-True ($launch.windowStyleSpecified -and $launch.windowStyle -eq 'Normal') ($app.action+' must show an ordinary application window.')
+    }
+  }
+  Test-Case 'Missing Office sample does not start an empty or hidden application' {
+    foreach($action in @('OpenWord','OpenExcel')){
+      $s=New-Scenario
+      $opened=Invoke-ControllerTest $s -Action $action -Hosts Office -AllowAppLaunch
+      Assert-True (-not $opened.data.ok -and $opened.data.error -eq 'START_HELPER_FIRST') ($action+' should require an existing prepared sample.')
+      Assert-True (-not [IO.File]::Exists((Join-Path $s.root 'launch.json'))) ($action+' must not start an application without its sample.')
+    }
+  }
+  Test-Case 'Development helper opens the requested Microsoft sample visibly with single-switch isolation' {
+    foreach($app in @(
+      @{name='Word';executable='WINWORD.EXE';extension='docx'},
+      @{name='Excel';executable='EXCEL.EXE';extension='xlsx'}
+    )){
+      $s=New-Scenario
+      Write-TestFile (Join-Path $s.root 'helper project\scripts\open-office-samples.ps1') $sampleHelperText
+      Write-TestFile (Join-Path $s.root 'sample-helper-wrapper.ps1') $sampleHelperWrapper
+      $officeExecutable=Join-Path $s.root ('programs\Microsoft Office\root\Office16\'+$app.executable)
+      $samplePath=Join-Path $s.root ('helper project\output\samples\OfficeHelper-Sample.'+$app.extension)
+      Write-TestFile $officeExecutable ''
+      Write-TestFile $samplePath 'user-edited-sample'
+      $null=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $s.root 'sample-helper-wrapper.ps1') -TestRoot $s.root -App $app.name
+      Assert-True ($LASTEXITCODE -eq 0) ($app.name+' helper should complete successfully.')
+      $launch=Get-Content -LiteralPath (Join-Path $s.root 'helper-launch.json') -Raw|ConvertFrom-Json
+      Assert-True ($launch.filePath -eq $officeExecutable) ($app.name+' helper must use the Microsoft executable, not a file association or COM automation.')
+      Assert-True ($launch.arguments.Count -eq 2 -and $launch.arguments[0] -eq '/x' -and $launch.arguments[1] -eq ('"'+$samplePath+'"')) ($app.name+' helper must preserve spaces in the sample path and use only the isolation switch.')
+      Assert-True ($launch.windowStyleSpecified -and $launch.windowStyle -eq 'Normal') ($app.name+' helper must never request a hidden sample window.')
+      Assert-True ([IO.File]::ReadAllText($samplePath) -eq 'user-edited-sample') ($app.name+' helper must not rewrite the existing sample.')
     }
   }
   Test-Case 'Remove clears portable ownership only and preserves user files' {
