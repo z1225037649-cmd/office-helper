@@ -255,7 +255,10 @@ export class OfficeAdapter implements HostAdapter {
           const before = change.before.documentParagraphs?.[paragraphIndex];
           const paragraph = paragraphs.items[paragraphIndex];
           if (!before || !paragraph || before.style !== 'Normal')
-            throw new HelperError('STALE_SELECTION', '原段落样式无法准确恢复，请使用 Word 的撤销。');
+            throw new HelperError(
+              'STALE_SELECTION',
+              '原段落样式无法准确恢复，请使用 Word 的撤销。',
+            );
           paragraph.styleBuiltIn = before.style;
         }
         await context.sync();

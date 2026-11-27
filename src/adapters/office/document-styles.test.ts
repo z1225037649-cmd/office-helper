@@ -4,12 +4,42 @@ import type { BuiltInParagraphStyle } from '../../core/contracts';
 
 function setup() {
   const source = [
-    { text: '第一章 项目概况', style: 'Normal' as BuiltInParagraphStyle, isListItem: false, tableNestingLevel: 0 },
-    { text: '一、项目说明', style: 'Normal' as BuiltInParagraphStyle, isListItem: false, tableNestingLevel: 0 },
-    { text: '（一）服务范围', style: 'Normal' as BuiltInParagraphStyle, isListItem: false, tableNestingLevel: 0 },
-    { text: '正文内容。', style: 'Normal' as BuiltInParagraphStyle, isListItem: false, tableNestingLevel: 0 },
-    { text: '第四章 表格内标题', style: 'Normal' as BuiltInParagraphStyle, isListItem: false, tableNestingLevel: 1 },
-    { text: '第五章 列表内标题', style: 'Normal' as BuiltInParagraphStyle, isListItem: true, tableNestingLevel: 0 },
+    {
+      text: '第一章 项目概况',
+      style: 'Normal' as BuiltInParagraphStyle,
+      isListItem: false,
+      tableNestingLevel: 0,
+    },
+    {
+      text: '一、项目说明',
+      style: 'Normal' as BuiltInParagraphStyle,
+      isListItem: false,
+      tableNestingLevel: 0,
+    },
+    {
+      text: '（一）服务范围',
+      style: 'Normal' as BuiltInParagraphStyle,
+      isListItem: false,
+      tableNestingLevel: 0,
+    },
+    {
+      text: '正文内容。',
+      style: 'Normal' as BuiltInParagraphStyle,
+      isListItem: false,
+      tableNestingLevel: 0,
+    },
+    {
+      text: '第四章 表格内标题',
+      style: 'Normal' as BuiltInParagraphStyle,
+      isListItem: false,
+      tableNestingLevel: 1,
+    },
+    {
+      text: '第五章 列表内标题',
+      style: 'Normal' as BuiltInParagraphStyle,
+      isListItem: true,
+      tableNestingLevel: 0,
+    },
   ];
   const paragraphs = source.map((item) => ({
     get text() {

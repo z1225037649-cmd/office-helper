@@ -17,8 +17,7 @@ export const normalizeDocumentStyles: FeatureDefinition = {
     if (selection.kind !== 'text' || selection.targetId !== 'document-body')
       throw new HelperError('UNAVAILABLE', '请在 Word 文字文档中检查全文标题样式。');
     const paragraphs = selection.documentParagraphs;
-    if (!paragraphs)
-      throw new HelperError('UNAVAILABLE', '当前 Word 版本没有提供全文段落信息。');
+    if (!paragraphs) throw new HelperError('UNAVAILABLE', '当前 Word 版本没有提供全文段落信息。');
 
     const analysis = analyzeDocumentStyles(paragraphs);
     const counts = { Heading1: 0, Heading2: 0, Heading3: 0 };

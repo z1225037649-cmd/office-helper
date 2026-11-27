@@ -77,14 +77,16 @@ describe('标书要求候选清单工作流', () => {
   });
 
   it('对不带全文快照的文字范围不猜测或扫描选区以外内容', () => {
-    expect(() => bidChecklist.prepare({
-      documentId: 'doc',
-      documentName: '稿件.docx',
-      kind: 'text',
-      targetId: 'selection',
-      targetLabel: '选中文字',
-      revision: '1',
-      text: '必须提供证明。',
-    })).toThrow('请在 Word');
+    expect(() =>
+      bidChecklist.prepare({
+        documentId: 'doc',
+        documentName: '稿件.docx',
+        kind: 'text',
+        targetId: 'selection',
+        targetLabel: '选中文字',
+        revision: '1',
+        text: '必须提供证明。',
+      }),
+    ).toThrow('请在 Word');
   });
 });

@@ -14,8 +14,10 @@ export interface DocumentStyleAnalysis {
   existingHeadingCount: number;
 }
 
-const headingOne = /^(?:第[〇零一二三四五六七八九十百千万\d]{1,12}[章节部分篇]|[一二三四五六七八九十]+[、.．])\s*\S/u;
-const headingTwo = /^(?:（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\)|\d+\.\d+(?!\.)\s+)\s*\S/u;
+const headingOne =
+  /^(?:第[〇零一二三四五六七八九十百千万\d]{1,12}[章节部分篇]|[一二三四五六七八九十]+[、.．])\s*\S/u;
+const headingTwo =
+  /^(?:（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\)|\d+\.\d+(?!\.)\s+)\s*\S/u;
 const headingThree = /^\d+\.\d+\.\d+(?:\.\d+)?\s+\S/u;
 
 function isHeadingStyle(style: DocumentParagraphSnapshot['style']): boolean {

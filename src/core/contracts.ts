@@ -101,13 +101,7 @@ export interface ParagraphSnapshot {
 }
 
 export type BuiltInParagraphStyle =
-  | 'Normal'
-  | 'Title'
-  | 'Subtitle'
-  | 'Heading1'
-  | 'Heading2'
-  | 'Heading3'
-  | 'Other';
+  'Normal' | 'Title' | 'Subtitle' | 'Heading1' | 'Heading2' | 'Heading3' | 'Other';
 
 /** Lightweight, serializable paragraph data used by explicit whole-document tasks. */
 export interface DocumentParagraphSnapshot {
