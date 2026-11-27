@@ -1,54 +1,55 @@
-import { cp, mkdir, readFile, writeFile, rm, copyFile } from 'node:fs/promises';
-import { resolve, join, dirname, sep } from 'node:path';
+import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { resolve, join, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { generateSideloadFile } from 'office-addin-dev-settings';
 import { OfficeAddinManifest, OfficeApp } from 'office-addin-manifest';
 import JSZip from 'jszip';
-
-function populateWorksheetSample(xml) {
-  let matches = 0;
-  const replaced = xml.replace(
-    /<((?:[A-Za-z_][\w.-]*:)?sheetData)\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)/g,
-    (_match, tag, attributes) => {
-      matches += 1;
-      const prefix = tag.slice(0, -'sheetData'.length);
-      const textCell = (address, text) =>
-        `<${prefix}c r="${address}" t="inlineStr"><${prefix}is><${prefix}t>${text}</${prefix}t></${prefix}is></${prefix}c>`;
-      const rows =
-        `<${prefix}row r="1">${textCell('A1', '项目')}${textCell('B1', '金额')}</${prefix}row>` +
-        [120, 85, 45.5, 200]
-          .map(
-            (value, i) =>
-              `<${prefix}row r="${i + 2}">${textCell(`A${i + 2}`, `项目${i + 1}`)}<${prefix}c r="B${i + 2}"><${prefix}v>${value}</${prefix}v></${prefix}c></${prefix}row>`,
-          )
-          .join('');
-      return `<${tag}${attributes}>${rows}</${tag}>`;
-    },
-  );
-  if (matches !== 1 || replaced === xml)
-    throw new Error('The Microsoft Excel template must contain exactly one supported sheetData.');
-  return replaced.replace(
-    /<((?:[A-Za-z_][\w.-]*:)?dimension)\b[^>]*\/>/,
-    (_match, tag) => `<${tag} ref="A1:B5"/>`,
-  );
-}
+import {
+  assertPortableOutputsAbsent,
+  assertSafePortableContent,
+  copyInspectedPortableSite,
+  createPortableManifest,
+  inspectPortableSite,
+  populateWorksheetSample,
+  portablePackagePaths,
+} from '../portable/package-policy.mjs';
 
 const run = promisify(execFile);
 if (process.platform !== 'win32' || process.arch !== 'x64')
   throw new Error('Build the Windows x64 portable package on Windows x64.');
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const output = resolve('output/portable');
-const name = `OfficeHelper-${pkg.version}-win-x64`;
-const destination = join(output, name);
-if (!destination.startsWith(output + sep)) throw new Error('Invalid package path');
-await rm(destination, { recursive: true, force: true });
+const paths = portablePackagePaths(output, pkg.version);
+const { name, destination, archive } = paths;
+// Check before writing anything. Never remove or replace an earlier deliverable.
+await assertPortableOutputsAbsent(paths);
+const siteFiles = await inspectPortableSite('dist');
+const original = await readFile('manifests/office/manifest.xml', 'utf8');
+const portableManifest = createPortableManifest(original, pkg.version);
+for (const file of [
+  'server.mjs',
+  'site-policy.mjs',
+  'controller.ps1',
+  'certificates.ps1',
+  'Launcher.cs',
+  'launcher.manifest',
+  'Launcher.exe.config',
+  '使用说明.txt',
+]) {
+  assertSafePortableContent(await readFile(join('portable', file)), `portable/${file}`);
+}
+await mkdir(output, { recursive: true });
+await mkdir(destination);
 for (const part of ['app', 'runtime', 'site', 'manifests', 'samples', 'licenses'])
   await mkdir(join(destination, part), { recursive: true });
-await cp('dist', join(destination, 'site'), { recursive: true });
-for (const file of ['server.mjs', 'controller.ps1', 'certificates.ps1'])
-  await copyFile(join('portable', file), join(destination, 'app', file));
+await copyInspectedPortableSite('dist', join(destination, 'site'), siteFiles);
+for (const file of ['server.mjs', 'site-policy.mjs', 'controller.ps1', 'certificates.ps1']) {
+  const bytes = await readFile(join('portable', file));
+  assertSafePortableContent(bytes, `app/${file}`);
+  await writeFile(join(destination, 'app', file), bytes, { flag: 'wx' });
+}
 await copyFile(process.execPath, join(destination, 'runtime/node.exe'));
 const nodeLicense = join(dirname(process.execPath), 'LICENSE');
 try {
@@ -85,17 +86,7 @@ for (const dependency of [
     );
   }
 }
-const original = await readFile('manifests/office/manifest.xml', 'utf8');
 // Office requires manifest versions >= 1.0, even for a 0.x product release.
-const portableManifest = original
-  .replace(/<Version>[^<]+<\/Version>/, `<Version>1.${pkg.version}</Version>`)
-  .replaceAll('26b5f5ec-853a-4c06-9c1c-8ac9ea33421a', 'f5202c69-1f59-4e09-b510-829a3748a31b')
-  .replaceAll('localhost:3443', 'localhost:18766')
-  .replace('办公小帮手（开发版）', '办公小帮手（便携试用版）')
-  .replace(
-    '用简单的操作查看选区和计算合计。',
-    '查看选区，调整字号、加粗、居中、倍数行距和首行缩进，预览后确认并支持单步恢复；表格合计只读。',
-  );
 const manifestPath = join(destination, 'manifests/office.xml');
 await writeFile(manifestPath, portableManifest);
 for (const [component, hostName] of [
@@ -151,7 +142,7 @@ for (const [app, extension] of [
   );
 }
 const compiler = join(process.env.WINDIR, 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
-const iconImage = await readFile('public/assets/icon-64.png');
+const iconImage = await readFile(join(destination, 'site/assets/icon-64.png'));
 const iconHeader = Buffer.alloc(22);
 iconHeader.writeUInt16LE(1, 2);
 iconHeader.writeUInt16LE(1, 4);
@@ -187,6 +178,7 @@ await writeFile(
       node: process.version,
       platform: 'win32-x64',
       builtAt: new Date().toISOString(),
+      siteFiles: await inspectPortableSite(join(destination, 'site')),
     },
     null,
     2,
@@ -198,8 +190,9 @@ await writeFile(
     process.version +
     '\nUI bundles: React, React DOM, scheduler, lucide-react.\nSample document templates: Microsoft Office-Addin-Scripts (MIT).\nSee accompanying license files. The portable server and launcher do not require npm.\n',
 );
-const archive = join(output, name + '.zip');
 const powershell = join(process.env.WINDIR, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+// The legacy ZIP helper replaces its destination; fail closed before invoking it.
+await assertPortableOutputsAbsent(paths, { includeDirectory: false });
 // Paths are structured arguments, never interpolated into a shell expression.
 await run(
   powershell,
@@ -220,5 +213,5 @@ await run(
 const hash = createHash('sha256')
   .update(await readFile(archive))
   .digest('hex');
-await writeFile(archive + '.sha256', hash + '  ' + name + '.zip\n');
+await writeFile(paths.checksum, hash + '  ' + name + '.zip\n', { flag: 'wx' });
 console.log(JSON.stringify({ folder: destination, zip: archive, sha256: hash }, null, 2));

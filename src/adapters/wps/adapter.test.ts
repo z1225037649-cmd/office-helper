@@ -10,6 +10,7 @@ interface TextState {
   writes: number[];
   bold?: number | boolean;
   boldWrites: (number | boolean | undefined)[];
+  storyType?: number;
 }
 
 function setup() {
@@ -76,6 +77,9 @@ function setup() {
         },
       },
       Document: document,
+      get StoryType() {
+        return state.storyType;
+      },
       get Duplicate() {
         return rangeFor(state);
       },
@@ -140,6 +144,163 @@ describe('WPS 字号修改与恢复的安全边界', () => {
     });
     expect(original.writes).toEqual([]);
     expect(other.writes).toEqual([]);
+  });
+
+  it.each(['text.resize', 'text.bold'] as const)(
+    '跨 story 即使位置、文字与格式相同，也拒绝旧 %s 预览',
+    async (type) => {
+      const { host, app, original, other, selectionFor } = setup();
+      original.storyType = 41;
+      Object.assign(other, {
+        text: original.text,
+        start: original.start,
+        end: original.end,
+        size: original.size,
+        bold: original.bold,
+        storyType: 47,
+      });
+      const before = await host.readSelection();
+      app.Selection = selectionFor(other);
+      const after = await host.readSelection();
+      expect(after).toMatchObject({
+        targetId: before.targetId,
+        text: before.text,
+        fontSize: before.fontSize,
+        bold: before.bold,
+      });
+      expect(after.revision).not.toBe(before.revision);
+
+      await expect(
+        host.apply(type === 'text.resize' ? { type, size: 22 } : { type, bold: true }, before),
+      ).rejects.toMatchObject({ code: 'STALE_SELECTION' });
+      expect(original.writes).toEqual([]);
+      expect(other.writes).toEqual([]);
+      expect(original.boldWrites).toEqual([]);
+      expect(other.boldWrites).toEqual([]);
+    },
+  );
+
+  it.each(['text.resize', 'text.bold'] as const)(
+    'Duplicate 属于另一 story 时，%s 在写入前拒绝',
+    async (type) => {
+      const { host, app, original, other, rangeFor, selectionFor } = setup();
+      original.storyType = 41;
+      Object.assign(other, {
+        text: original.text,
+        start: original.start,
+        end: original.end,
+        size: original.size,
+        bold: original.bold,
+        storyType: 47,
+      });
+      const before = await host.readSelection();
+      const range = rangeFor(original);
+      Object.defineProperty(range, 'Duplicate', { value: rangeFor(other) });
+      const selection = selectionFor(original);
+      Object.defineProperty(selection, 'Range', { value: range });
+      app.Selection = selection;
+      expect(await host.readSelection()).toEqual(before);
+
+      await expect(
+        host.apply(type === 'text.resize' ? { type, size: 22 } : { type, bold: true }, before),
+      ).rejects.toMatchObject({ code: 'STALE_SELECTION' });
+      expect(original.writes).toEqual([]);
+      expect(other.writes).toEqual([]);
+      expect(original.boldWrites).toEqual([]);
+      expect(other.boldWrites).toEqual([]);
+    },
+  );
+
+  it.each(['missing', 'throws'] as const)(
+    '旧宿主 StoryType %s 时仍可修改并恢复字号',
+    async (mode) => {
+      const { host, app, original, rangeFor, selectionFor } = setup();
+      const range = rangeFor(original);
+      if (mode === 'missing') delete range.StoryType;
+      else
+        Object.defineProperty(range, 'StoryType', {
+          get() {
+            throw new Error('StoryType unavailable');
+          },
+        });
+      Object.defineProperty(range, 'Duplicate', { value: range });
+      const selection = selectionFor(original);
+      Object.defineProperty(selection, 'Range', { value: range });
+      app.Selection = selection;
+
+      const before = await host.readSelection();
+      const receipt = await host.apply({ type: 'text.resize', size: 22 }, before);
+      await host.undo(receipt);
+      expect(original.writes).toEqual([22, 18]);
+      expect(original.boldWrites).toEqual([]);
+      expect(original.text).toBe(before.text);
+    },
+  );
+
+  it.each([
+    [41, 47],
+    [41, undefined],
+    [undefined, 41],
+  ])('保存的 Range story 从 %s 变为 %s 时拒绝恢复', async (beforeStory, afterStory) => {
+    const { host, original } = setup();
+    original.storyType = beforeStory;
+    const receipt = await host.apply({ type: 'text.resize', size: 22 }, await host.readSelection());
+    original.storyType = afterStory;
+
+    await expect(host.undo(receipt)).rejects.toMatchObject({ code: 'STALE_SELECTION' });
+    expect(original.writes).toEqual([22]);
+  });
+
+  it('切换到同位置同文字的另一 story 后仍只恢复保存的原 Range', async () => {
+    const { host, app, original, other, selectionFor } = setup();
+    original.storyType = 41;
+    Object.assign(other, {
+      text: original.text,
+      start: original.start,
+      end: original.end,
+      size: 22,
+      storyType: 47,
+    });
+    const receipt = await host.apply({ type: 'text.resize', size: 22 }, await host.readSelection());
+    app.Selection = selectionFor(other);
+    await host.readSelection();
+    await host.undo(receipt);
+
+    expect(original.writes).toEqual([22, 18]);
+    expect(other.writes).toEqual([]);
+  });
+
+  it.each(['apply', 'undo'] as const)('%s 写入期间 story 改变时不报告成功', async (stage) => {
+    const { host, app, original, rangeFor, selectionFor } = setup();
+    original.storyType = 41;
+    const range = rangeFor(original);
+    let changeStoryOnWrite = stage === 'apply';
+    Object.defineProperty(range.Font, 'Size', {
+      get: () => original.size,
+      set: (size: number) => {
+        original.writes.push(size);
+        original.size = size;
+        if (changeStoryOnWrite) original.storyType = 47;
+      },
+    });
+    Object.defineProperty(range, 'Duplicate', { value: range });
+    const selection = selectionFor(original);
+    Object.defineProperty(selection, 'Range', { value: range });
+    app.Selection = selection;
+    const before = await host.readSelection();
+
+    if (stage === 'apply') {
+      await expect(host.apply({ type: 'text.resize', size: 22 }, before)).rejects.toMatchObject({
+        code: 'INVALID_PLAN',
+      });
+      expect(original.writes).toEqual([22]);
+    } else {
+      const receipt = await host.apply({ type: 'text.resize', size: 22 }, before);
+      changeStoryOnWrite = true;
+      await expect(host.undo(receipt)).rejects.toMatchObject({ code: 'INVALID_PLAN' });
+      await expect(host.undo(receipt)).rejects.toMatchObject({ code: 'EXPIRED_TASK' });
+      expect(original.writes).toEqual([22, 18]);
+    }
   });
 
   it.each(['text', 'size'] as const)('预览后 %s 改变时拒绝写入', async (field) => {

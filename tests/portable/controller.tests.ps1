@@ -130,7 +130,7 @@ function Stop-Process { throw 'Opening a sample must not stop existing applicati
 function New-Scenario {
   $root=Join-Path $testRoot ([Guid]::NewGuid().ToString('N'))
   $package=Join-Path $root 'package one'
-  foreach($path in @('site\index.html','runtime\node.exe','app\server.mjs','site\wps\writer\ribbon.xml','site\wps\sheet\ribbon.xml','samples\OfficeHelper-Sample.docx','samples\OfficeHelper-Sample.xlsx')){Write-TestFile (Join-Path $package $path) ('fixture:'+ $path)}
+  foreach($path in @('site\index.html','runtime\node.exe','app\server.mjs','app\site-policy.mjs','site\wps\writer\ribbon.xml','site\wps\sheet\ribbon.xml','samples\OfficeHelper-Sample.docx','samples\OfficeHelper-Sample.xlsx')){Write-TestFile (Join-Path $package $path) ('fixture:'+ $path)}
   Write-TestFile (Join-Path $package 'manifests\office.xml') '<OfficeApp><Id>f5202c69-1f59-4e09-b510-829a3748a31b</Id></OfficeApp>'
   Write-TestFile (Join-Path $root 'controller\controller.ps1') $controllerText
   Write-TestFile (Join-Path $root 'controller\certificates.ps1') $fakeCertificates
@@ -323,6 +323,12 @@ try {
     $r=Invoke-ControllerTest $s -AllowTrust
     Assert-True (-not $r.data.ok) 'Missing sample must fail preparation.'
     Assert-True ((Read-Trace $s) -eq '') 'Incomplete package must be detected before trust or registrations are changed.'
+  }
+  Test-Case 'Missing shared static policy fails before any configuration is created' {
+    $s=New-Scenario;[IO.File]::Delete((Join-Path $s.package 'app\site-policy.mjs'))
+    $r=Invoke-ControllerTest $s -AllowTrust
+    Assert-True (-not $r.data.ok -and $r.data.error -eq 'PACKAGE_INCOMPLETE') 'The new runtime dependency must be required.'
+    Assert-True (-not [IO.Directory]::Exists($s.state) -and (Read-Trace $s) -eq '') 'A broken runtime must not register hosts, write settings or touch trust.'
   }
   Test-Case 'Malformed WPS config is rejected before Office changes in Both mode' {
     $s=New-Scenario;Write-TestFile $s.publish '<unexpected/>'

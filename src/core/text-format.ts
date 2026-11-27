@@ -15,6 +15,24 @@ export function validateTextPlan(plan: ActionPlan): asserts plan is TextActionPl
     case 'text.bold':
       if (typeof plan.bold === 'boolean') return;
       break;
+    case 'text.documentStyles': {
+      if (
+        Array.isArray(plan.assignments) &&
+        plan.assignments.length > 0 &&
+        plan.assignments.length <= 1500 &&
+        plan.assignments.every(
+          (assignment) =>
+            assignment &&
+            Number.isInteger(assignment.paragraphIndex) &&
+            assignment.paragraphIndex >= 0 &&
+            ['Heading1', 'Heading2', 'Heading3'].includes(assignment.style),
+        ) &&
+        new Set(plan.assignments.map((assignment) => assignment.paragraphIndex)).size ===
+          plan.assignments.length
+      )
+        return;
+      break;
+    }
     case 'paragraph.center':
       return;
     case 'paragraph.spacing':
@@ -48,6 +66,28 @@ export function requireParagraphs(selection: SelectionSnapshot): ParagraphSnapsh
 
 export function validateTextSelection(plan: TextActionPlan, selection: SelectionSnapshot): void {
   validateTextPlan(plan);
+  if (plan.type === 'text.documentStyles') {
+    const paragraphs = selection.documentParagraphs;
+    if (selection.kind !== 'text' || selection.targetId !== 'document-body' || !paragraphs?.length)
+      throw new HelperError('UNAVAILABLE', '无法读取全文段落，请重新打开文档后再试。');
+    if (
+      plan.assignments.some(({ paragraphIndex }) => {
+        const paragraph = paragraphs[paragraphIndex];
+        return (
+          !paragraph ||
+          !paragraph.text.trim() ||
+          paragraph.isListItem ||
+          paragraph.inTable ||
+          paragraph.style !== 'Normal'
+        );
+      })
+    )
+      throw new HelperError(
+        'STALE_SELECTION',
+        '需要处理的段落已改变或含列表、表格、自定义样式，请重新检查全文。',
+      );
+    return;
+  }
   if (selection.kind !== 'text' || !selection.text?.trim())
     throw new HelperError('EMPTY_SELECTION', '请先选中要处理的文字。');
   if (plan.type === 'text.resize' && !selection.fontSize)
@@ -94,6 +134,11 @@ export function projectTextPlan(
   const next = structuredClone(selection);
   if (plan.type === 'text.resize') next.fontSize = plan.size;
   else if (plan.type === 'text.bold') next.bold = plan.bold;
+  else if (plan.type === 'text.documentStyles')
+    for (const assignment of plan.assignments) {
+      const paragraph = next.documentParagraphs?.[assignment.paragraphIndex];
+      if (paragraph) paragraph.style = assignment.style;
+    }
   else
     for (const paragraph of next.paragraphs ?? []) {
       if (plan.type === 'paragraph.center') paragraph.alignment = 'Centered';
@@ -109,6 +154,8 @@ export function textPlanMessage(plan: TextActionPlan): string {
       return `已把选中文字调整为 ${plan.size} 磅。`;
     case 'text.bold':
       return plan.bold ? '已把选中文字加粗。' : '已取消选中文字的加粗。';
+    case 'text.documentStyles':
+      return `已统一全文 ${plan.assignments.length} 个标题段落的内置样式。`;
     case 'paragraph.center':
       return '已将选中文字所在的完整段落居中。';
     case 'paragraph.spacing':

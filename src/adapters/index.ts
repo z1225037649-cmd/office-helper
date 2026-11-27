@@ -20,9 +20,10 @@ export async function createAdapter(
     if (kind !== 'text' && kind !== 'sheet')
       throw new HelperError('HOST_CONNECTION', 'WPS 入口未指定文字或表格类型。');
     const { WpsAdapter } = await import('./wps/adapter');
+    const { withWpsPrintPreview } = await import('./wps/print-preview');
     const adapter = new WpsAdapter(kind);
     await adapter.readSelection();
-    return adapter;
+    return withWpsPrintPreview(adapter);
   }
   throw new HelperError('HOST_CONNECTION', '无法识别这个插件入口。');
 }

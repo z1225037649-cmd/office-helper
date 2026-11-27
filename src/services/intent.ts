@@ -147,6 +147,34 @@ function averageIntent(input: string, featureId: string): IntentResult {
   return { type: 'match', featureId };
 }
 
+function sheetFormatIntent(input: string, feature: FeatureDefinition): IntentResult {
+  let request = input;
+  for (let i = 0; i < 8; i++) {
+    const prefix = request.match(/^(?:请|帮我|帮忙|麻烦|把|将|给我|给|让|先|你)/)?.[0];
+    if (!prefix) break;
+    request = request.slice(prefix.length);
+  }
+  if (request.endsWith('一下')) request = request.slice(0, -2);
+  // Only the current selection is supported. Never discard a row/column number,
+  // a requested width, or a request to turn a format off.
+  const targetPattern =
+    /^(?:(?:当前)?(?:选中(?:的)?|选区(?:的)?|这些)(?:单元格|表格|列|范围|内容)?(?:的)?|当前(?:单元格|表格|列|范围|选区)(?:的)?|单元格|表格)$/;
+  // Match the complete operation before its target, so “当前选区” cannot consume
+  // “列” from “列宽自适应” or “单元格” from “单元格换行”.
+  const completeRequest = feature.phrases.some((phrase) => {
+    const operation = phrase.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+    return (
+      request === operation ||
+      (request.endsWith(operation) && targetPattern.test(request.slice(0, -operation.length)))
+    );
+  });
+  if (!completeRequest)
+    return clarify(
+      '请只对当前选区说“自动调整列宽”“自动换行”或“突出表头”。本版不支持关闭换行、指定列宽数值或另选某行；请先在表格中选好范围。',
+    );
+  return { type: 'match', featureId: feature.id };
+}
+
 export class LocalIntentProvider implements IntentProvider {
   async resolve(
     input: string,
@@ -163,9 +191,21 @@ export class LocalIntentProvider implements IntentProvider {
       .replace(/\s+/g, '')
       .replace(/(?:[，,。.!?！？；;]|谢谢|就好|即可|吧|呀|啊)+$/g, '');
     // 多步请求必须逐项重新说，不能丢失参数后执行某个功能的默认值。
-    const matches = available.filter((feature) =>
-      feature.phrases.some((phrase) => normalized.includes(phrase)),
+    const normalizePhrase = (phrase: string) =>
+      phrase.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+    let matches = available.filter((feature) =>
+      feature.phrases.some((phrase) => normalized.includes(normalizePhrase(phrase))),
     );
+    if (matches.some((feature) => feature.id === 'sheet.header')) {
+      // “加粗” inside the header phrase is not a second operation. Keep any
+      // independent bold request, and validate the original full input below.
+      const outsideHeader = normalized.replace(/加粗表头/g, ' ');
+      matches = matches.filter(
+        (feature) =>
+          feature.id !== 'text.bold' ||
+          feature.phrases.some((phrase) => outsideHeader.includes(normalizePhrase(phrase))),
+      );
+    }
     if (matches.length > 1)
       return { type: 'choices', featureIds: matches.map((feature) => feature.id) };
     const feature = matches[0];
@@ -174,10 +214,23 @@ export class LocalIntentProvider implements IntentProvider {
     const request = cancelledBold ? normalized.replace(/取消(?:加粗|粗体)/g, '') : normalized;
     if (negatedRequest.test(request))
       return clarify('这句话包含取消或否定要求，请单独说清一项操作；目前支持“取消加粗”。');
-    if (multipleSteps.test(normalized))
+    const stepRequest = feature.form
+      ? normalized.replace(
+          feature.phrases
+            .map(normalizePhrase)
+            .sort((a, b) => b.length - a.length)
+            .find((phrase) => normalized.includes(phrase)) ?? '',
+          '',
+        )
+      : normalized;
+    if (multipleSteps.test(stepRequest))
       return clarify('请一次只说一个操作和一个目标数值，例如“行距设为 1.5 倍”。');
 
     switch (feature.id) {
+      case 'sheet.autofit':
+      case 'sheet.wrap':
+      case 'sheet.header':
+        return sheetFormatIntent(normalized, feature);
       case 'sheet.average':
         return averageIntent(normalized, feature.id);
       case 'text.enlarge':

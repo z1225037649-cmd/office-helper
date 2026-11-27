@@ -1,5 +1,6 @@
 import type {
   ActionPlan,
+  BuiltInParagraphStyle,
   CellType,
   CellValue,
   ChangeReceipt,
@@ -10,15 +11,19 @@ import type {
   SelectionSnapshot,
   TextActionPlan,
 } from '../../core/contracts';
+import { isExtendedPlan } from '../../core/contracts';
 import { HelperError } from '../../core/errors';
 import {
   MAX_SELECTION_CELLS,
+  MAX_DOCUMENT_PARAGRAPHS,
+  MAX_DOCUMENT_TEXT,
   MAX_SELECTION_PARAGRAPHS,
   assertSameSelection,
   assertSelectionLimit,
 } from '../../core/selection';
 import { projectTextPlan, textPlanMessage, validateTextSelection } from '../../core/text-format';
 import { explicitMultipleSpacing } from './spacing';
+import { OfficeTasks, officeTaskCapabilities } from './tasks';
 
 interface WordTarget {
   id: string;
@@ -28,8 +33,26 @@ interface WordChange {
   token: string;
   target: WordTarget;
   before: SelectionSnapshot;
-  plan: TextActionPlan;
+  plan: Exclude<TextActionPlan, { type: 'text.documentStyles' }>;
   after: SelectionSnapshot;
+}
+interface WordDocumentStyleChange {
+  token: string;
+  before: SelectionSnapshot;
+  after: SelectionSnapshot;
+  plan: Extract<TextActionPlan, { type: 'text.documentStyles' }>;
+}
+type WordChangeState = WordChange | WordDocumentStyleChange;
+
+function builtInParagraphStyle(style: string): BuiltInParagraphStyle {
+  const value = style.replace(/[\s_-]/gu, '').toLocaleLowerCase();
+  if (value === 'normal') return 'Normal';
+  if (value === 'title') return 'Title';
+  if (value === 'subtitle') return 'Subtitle';
+  if (value === 'heading1') return 'Heading1';
+  if (value === 'heading2') return 'Heading2';
+  if (value === 'heading3') return 'Heading3';
+  return 'Other';
 }
 
 function readCellTypes(value: unknown): CellType[][] | undefined {
@@ -59,8 +82,9 @@ export class OfficeAdapter implements HostAdapter {
   readonly info: HostInfo;
   private readonly sessionId = crypto.randomUUID();
   private selection?: WordTarget;
-  private change?: WordChange;
+  private change?: WordChangeState;
   private disposed = false;
+  private readonly tasks: OfficeTasks;
 
   constructor(kind: DocumentKind, canWrite = false) {
     this.info = {
@@ -73,12 +97,14 @@ export class OfficeAdapter implements HostAdapter {
           ? ([
               'text.resize',
               'text.bold',
+              'text.documentStyles',
               'paragraph.center',
               'paragraph.spacing',
               'paragraph.indent',
               'history.undo',
             ] as const)
           : []),
+        ...officeTaskCapabilities(kind),
       ],
       notice:
         kind === 'text'
@@ -87,11 +113,23 @@ export class OfficeAdapter implements HostAdapter {
             : '当前 Office 版本支持读取；文字格式修改需要 WordApi 1.3。'
           : '选中要计算的单元格，合计或平均值会显示在助手里。',
     };
+    this.tasks = new OfficeTasks(
+      kind,
+      () => this.documentIdentity(),
+      async (expected) => {
+        assertSameSelection(expected, await this.readSelection());
+      },
+    );
   }
 
   async readSelection(options: SelectionReadOptions = {}): Promise<SelectionSnapshot> {
     this.ensureActive();
     if (this.info.kind === 'text') {
+      if (options.includeDocumentParagraphs) {
+        if (!this.info.capabilities.includes('text.documentStyles'))
+          throw new HelperError('UNAVAILABLE', '当前 Word 版本暂不支持安全读取全文标题样式。');
+        return Word.run((context) => this.documentStyleSnapshot(context));
+      }
       if (!this.info.capabilities.includes('text.resize')) {
         return Word.run((context) =>
           this.snapshot(context, {
@@ -130,7 +168,7 @@ export class OfficeAdapter implements HostAdapter {
         );
       range.load(options.includeCellTypes ? ['values', 'valueTypes'] : 'values');
       await context.sync();
-      return {
+      const snapshot: SelectionSnapshot = {
         ...this.documentIdentity(),
         kind: 'sheet',
         targetId: `${sheet.id}:${range.address}`,
@@ -141,6 +179,7 @@ export class OfficeAdapter implements HostAdapter {
           ? { cellTypes: readCellTypes(range.valueTypes), rowScope: 'all' as const }
           : {}),
       };
+      return this.tasks.capture(context, range, sheet.id, snapshot, options);
     });
   }
 
@@ -149,6 +188,12 @@ export class OfficeAdapter implements HostAdapter {
     expected: SelectionSnapshot,
   ): Promise<ChangeReceipt> {
     this.ensureActive();
+    if (isExtendedPlan(plan)) {
+      if (!this.info.capabilities.includes(plan.type))
+        throw new HelperError('UNAVAILABLE', '当前 Office 版本不支持这个操作，请使用原生界面。');
+      return this.tasks.apply(plan, expected);
+    }
+    if (plan.type === 'text.documentStyles') return this.applyDocumentStyles(plan, expected);
     if (!this.info.capabilities.includes(plan.type) || !this.selection)
       throw new HelperError('UNAVAILABLE', '当前版本暂不能执行这个格式操作。');
     validateTextSelection(plan, expected);
@@ -166,7 +211,7 @@ export class OfficeAdapter implements HostAdapter {
       };
       const previous = this.change;
       this.change = undefined;
-      if (previous) this.release(previous.target.range);
+      if (previous) this.releaseChange(previous);
       let written = false;
       try {
         written = true;
@@ -195,9 +240,31 @@ export class OfficeAdapter implements HostAdapter {
 
   async undo(receipt: ChangeReceipt): Promise<void> {
     this.ensureActive();
+    if (this.tasks.owns(receipt)) return this.tasks.undo(receipt);
     const change = this.change;
     if (!change || change.token !== receipt.token)
       throw new HelperError('EXPIRED_TASK', '这次修改已无法从助手中恢复。');
+    if (!('target' in change)) {
+      await Word.run(async (context) => {
+        const current = await this.documentStyleSnapshot(context);
+        assertSameSelection(change.after, current);
+        const paragraphs = context.document.body.paragraphs;
+        paragraphs.load('items');
+        await context.sync();
+        for (const { paragraphIndex } of change.plan.assignments) {
+          const before = change.before.documentParagraphs?.[paragraphIndex];
+          const paragraph = paragraphs.items[paragraphIndex];
+          if (!before || !paragraph || before.style !== 'Normal')
+            throw new HelperError('STALE_SELECTION', '原段落样式无法准确恢复，请使用 Word 的撤销。');
+          paragraph.styleBuiltIn = before.style;
+        }
+        await context.sync();
+        const restored = await this.documentStyleSnapshot(context);
+        assertSameSelection(change.before, restored);
+      });
+      this.change = undefined;
+      return;
+    }
     await Word.run(change.target.range, async (context) => {
       const state = await this.readTextState(context, change.target);
       assertSameSelection(change.after, state.snapshot);
@@ -213,10 +280,23 @@ export class OfficeAdapter implements HostAdapter {
 
   dispose(): void {
     this.disposed = true;
+    this.tasks.dispose();
     if (this.selection) this.release(this.selection.range);
-    if (this.change) this.release(this.change.target.range);
+    if (this.change) this.releaseChange(this.change);
     this.selection = undefined;
     this.change = undefined;
+  }
+
+  async locate(snapshot: SelectionSnapshot, row: number, column: number): Promise<void> {
+    this.ensureActive();
+    if (this.info.kind !== 'sheet')
+      throw new HelperError('UNAVAILABLE', '请在原始 Excel 表格中定位检查结果。');
+    return this.tasks.locate(snapshot, row, column);
+  }
+
+  async openResult(actionId: string): Promise<void> {
+    this.ensureActive();
+    return this.tasks.openResult(actionId);
   }
 
   private async snapshot(
@@ -224,6 +304,80 @@ export class OfficeAdapter implements HostAdapter {
     target: WordTarget,
   ): Promise<SelectionSnapshot> {
     return (await this.readTextState(context, target)).snapshot;
+  }
+
+  private async documentStyleSnapshot(context: Word.RequestContext): Promise<SelectionSnapshot> {
+    const collection = context.document.body.paragraphs;
+    collection.load('items');
+    await context.sync();
+    if (collection.items.length > MAX_DOCUMENT_PARAGRAPHS)
+      throw new HelperError('SELECTION_TOO_LARGE', '全文段落超出本次安全检查上限。');
+    for (const paragraph of collection.items)
+      paragraph.load(['text', 'styleBuiltIn', 'isListItem', 'tableNestingLevel']);
+    await context.sync();
+    let textLength = 0;
+    const documentParagraphs = collection.items.map((paragraph, index) => {
+      const text = paragraph.text;
+      textLength += text.length;
+      return {
+        index,
+        text,
+        style: builtInParagraphStyle(paragraph.styleBuiltIn),
+        isListItem: paragraph.isListItem,
+        inTable: paragraph.tableNestingLevel > 0,
+      };
+    });
+    if (textLength > MAX_DOCUMENT_TEXT)
+      throw new HelperError('SELECTION_TOO_LARGE', '全文字符数超出本次安全检查上限。');
+    const snapshot: SelectionSnapshot = {
+      ...this.documentIdentity(),
+      kind: 'text',
+      targetId: 'document-body',
+      targetLabel: `全文（${documentParagraphs.length} 个段落）`,
+      revision: JSON.stringify(documentParagraphs),
+      documentParagraphs,
+    };
+    assertSelectionLimit(snapshot);
+    return snapshot;
+  }
+
+  private async applyDocumentStyles(
+    plan: Extract<TextActionPlan, { type: 'text.documentStyles' }>,
+    expected: SelectionSnapshot,
+  ): Promise<ChangeReceipt> {
+    if (!this.info.capabilities.includes('text.documentStyles'))
+      throw new HelperError('UNAVAILABLE', '当前 Word 版本暂不支持全文标题样式。');
+    validateTextSelection(plan, expected);
+    return Word.run(async (context) => {
+      const before = await this.documentStyleSnapshot(context);
+      assertSameSelection(expected, before);
+      const paragraphs = context.document.body.paragraphs;
+      paragraphs.load('items');
+      await context.sync();
+      const previous = this.change;
+      this.change = undefined;
+      if (previous) this.releaseChange(previous);
+      try {
+        for (const { paragraphIndex, style } of plan.assignments)
+          paragraphs.items[paragraphIndex]!.styleBuiltIn = style;
+        await context.sync();
+        const after = await this.documentStyleSnapshot(context);
+        const projected = projectTextPlan(before, plan);
+        assertSameSelection({ ...projected, revision: after.revision }, after);
+        const token = crypto.randomUUID();
+        this.change = { token, before, after, plan };
+        return {
+          token,
+          message: textPlanMessage(plan),
+          canUndo: true,
+        };
+      } catch (error) {
+        throw new HelperError(
+          'INVALID_PLAN',
+          '标题样式可能已部分修改，读回核对未通过。请检查全文，并使用 Word 原生撤销。',
+        );
+      }
+    });
   }
 
   private async readTextState(context: Word.RequestContext, target: WordTarget) {
@@ -312,7 +466,14 @@ export class OfficeAdapter implements HostAdapter {
   }
   private documentIdentity() {
     const url = Office.context.document.url || '';
-    let name = url.split(/[\\/]/).pop() || '当前文档';
+    let path = url;
+    try {
+      const parsed = new URL(url);
+      if (['http:', 'https:', 'file:'].includes(parsed.protocol)) path = parsed.pathname;
+    } catch {
+      /* Native paths and unsaved documents need not be URLs. */
+    }
+    let name = path.split(/[\\/]/).pop() || '当前文档';
     try {
       name = decodeURIComponent(name);
     } catch {
@@ -328,6 +489,9 @@ export class OfficeAdapter implements HostAdapter {
       range.untrack();
       await context.sync();
     }).catch(() => undefined);
+  }
+  private releaseChange(change: WordChangeState) {
+    if ('target' in change) this.release(change.target.range);
   }
 }
 

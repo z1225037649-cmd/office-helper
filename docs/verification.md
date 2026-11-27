@@ -1,6 +1,26 @@
 # 验证记录
 
-日期：2026-11-27（Asia/Shanghai）。前期环境：Windows，Node.js 24.16.0；本轮续开发为 Windows、Node.js 24.18.0，浏览器演示使用 Codex 内置浏览器检查。下方历史宿主记录不表示当前机器已安装对应软件。
+更新：2026-11-27（Asia/Hong_Kong）。当前0.2.2核验环境为Windows、Node.js v24.16.0，生产页面使用独立Chrome／Playwright会话检查。下方保留前期不同设备的记录，不表示当前机器已安装、启动或验收过对应宿主。
+
+## 2026-11-27 五项扩展收口与 0.2.2 候选交付
+
+本节为最新自动化与封包证据；下方0.2.1和更早的宿主记录作为历史保留。时间按Asia/Hong_Kong记录，本轮实际Node为v24.16.0。本轮未提交、推送或发布Release。
+
+- 最终源码：TypeScript严格检查通过；Vitest **26个文件、1,035项通过、0失败**；Vite生产构建通过。原生任务专项包括Office90项、WPS129项，WPS打印预览40项；另有扩展诊断与隔离样本57项。1,035是当前完整工作区计数，其中包含另一对话的模块测试，不能解释为1,035项均专属这五项功能。
+- 构建稳定性：最终构建前后对`src/`、`public/`、`manifests/`、`scripts/`、`portable/`逐文件核对SHA256一致，输出`SOURCE_FREEZE_VERIFIED`。生产资源另行记录逐文件哈希。后续说明文档编辑不改变该构建的内容。
+- 最终生产浏览器回归：19项通过，涵盖三项表格排版及打印的预览／确认／恢复，重复漏填检查，副本和PDF参数往返，PDF选区／当前表的明确范围，通知完整预览／草稿往返／独立生成。350px大字号的页面宽度与视口均为350，无横向溢出；控制台0错误／0警告；已查看最终截图。测试为浏览器演示，不读写真实文档。
+- PDF安全审查补强：保存窗口期间或输出后状态变化时停止或提示核对残件；WPS局部表格导出在保存窗口前、导出前及输出后核对单表选择和归属，不自动取消分组。WPS文字选区要求可确认的正文StoryType并设置仅选区参数；未知区域、页眉／页脚等转原生指引。文字区域加入快照revision，防止同位置同文字跨区域通过。相关边界均有回归测试。
+- 便携隔离：**63项通过**，含31项Node测试（27项打包策略、4项静态服务）、12组内存证书生命周期及20项控制器测试。测试没有改动真实注册表、系统证书信任或用户文档；当前进程的测试脚本执行方式不改变持久执行策略。
+- 诊断隔离：四宿主使用各自完整路径、RUN／MATRIX标记及内容矩阵核验；普通文件不能执行。WPS正常URL的专用bootstrap仅由显式启动的专项服务临时提供，不改磁盘public入口、发布注册或生产包。报告使用专用令牌，生产包不得包含令牌、诊断入口、私钥或source map。专项服务启动锁禁止重放同一轮。
+- **真实宿主状态仍未通过**：本轮未在扩展样本打开后执行五项新增动作，无新增Word、Excel、WPS文字或WPS表格专项passed报告。Excel仍有“未经授权产品／登录以设置Office”提示；桌面工具收到Esc停止信号后已停止输入。没有代操作登录、授权、安全弹窗或系统信任，没有保存、关闭或更改用户真实文件。历史字号／合计／平均值实测不能替代这些新增能力的验收。
+
+本地证据：`output/verification/five-gaps-022-vitest.json`、`five-gaps-022-vitest.txt`、`five-gaps-022-typecheck.txt`、`five-gaps-022-build.txt`、`five-gaps-022-source-before.json`、`five-gaps-022-source-after.json`、`five-gaps-022-dist.json`、`five-gaps-022-browser.json`、`five-gaps-022-browser-console.txt`；截图`output/playwright/five-gaps-release022.png`，驱动脚本`output/playwright/verify-five-gaps-release022.js`。这些均为本地产物，不随Git迁移。
+
+主线程独立复核最终`output/portable/OfficeHelper-0.2.2-win-x64.zip`：43个文件、34,715,579字节，全部ZIP条目CRC32通过，SHA256为`e7227eafabc007ca54a5a39f20c1f107ca90d5e52c695ab8473bf6da642d73e2`，与校验文件一致。19个站点文件与冻结dist逐字节匹配；另4个WPS manifest／ribbon仅为打包脚本规定的便携ID与标签重写，逐项核对一致。`build-info.json`的全部站点哈希匹配，Office版本1.0.2.2、内置Node及两类样本存在。复核证据为`output/verification/five-gaps-022-archive-main-review.json`。旧0.2.1 ZIP再次核对仍为`61cc733aba97ee0b0aac89e50d873851e55536a7475dd0c22ac943b8c35fb002`。
+
+实际解包核验：Word样本两段正文的显式单倍行距与零首行缩进、Excel样本A1:B5的5行10格及450.5／112.625、两种样本内嵌Office清单1.0.2.2均通过，微软清单校验结果为valid。ZIP解压到包含中文与空格的独立临时目录，仅使用包内Node、PATH排除系统Node与npm；HTTP首页、WPS入口与资源200，开启证书及主机身份校验的HTTPS正常，诊断／令牌／源码／source map路径404。标准输入停止服务后退出码0，18765、18766及IPv6回环端口可重新绑定。仅只读复用现有便携证书，证书材料前后未变，没有运行注册、信任变更或Office／WPS启动。证据为`output/verification/portable-022-artifact.json`、`portable-022-manifest.txt`及`portable-022-runtime.json`。主线程自己的5181预览服务和测试浏览器已关闭。
+
+候选包的实际归档、SHA256、微软清单校验、样本／资源一致性及中文路径运行证据另见[便携版说明](portable.md)。交付等级为**候选试用**；完整交付仍须逐宿主通过取消／过期／范围／格式恢复／原生打印预览／文件结果／新通知验收。
 
 ## 2026-11-27 平均值模块与本机 WPS 实机验收
 

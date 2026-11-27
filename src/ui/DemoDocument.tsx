@@ -6,9 +6,18 @@ interface Props {
   kind: DocumentKind;
   disabled: boolean;
   onSwitch: (kind: DocumentKind) => void;
+  generatedNotice?: { name: string; text: string };
+  locatedCell?: { row: number; column: number };
 }
 
-export function DemoDocument({ selection, kind, disabled, onSwitch }: Props) {
+export function DemoDocument({
+  selection,
+  kind,
+  disabled,
+  onSwitch,
+  generatedNotice,
+  locatedCell,
+}: Props) {
   return (
     <section className="demo-workspace" aria-label="演示文档">
       <div className="workspace-toolbar">
@@ -115,6 +124,16 @@ export function DemoDocument({ selection, kind, disabled, onSwitch }: Props) {
               <span>120</span>
             </div>
             <table className="demo-sheet">
+              <colgroup>
+                <col style={{ width: 35 }} />
+                <col />
+                <col
+                  style={{
+                    width: `${((selection?.sheetLayout?.columnWidths[0] ?? 140) * 4) / 3}px`,
+                  }}
+                />
+                <col />
+              </colgroup>
               <caption className="sr-only">活动费用，已选中金额列 B2 到 B5</caption>
               <thead>
                 <tr>
@@ -135,7 +154,20 @@ export function DemoDocument({ selection, kind, disabled, onSwitch }: Props) {
                   <tr key={name}>
                     <th>{index + 2}</th>
                     <td>{name}</td>
-                    <td className={`selected-cell cell-${index}`}>
+                    <td
+                      className={`selected-cell cell-${index}`}
+                      style={{
+                        fontWeight:
+                          index === 0 && selection?.sheetLayout?.headerBold[0] ? 700 : 400,
+                        whiteSpace: selection?.sheetLayout?.wrapText[index]?.[0]
+                          ? 'normal'
+                          : 'nowrap',
+                        outline:
+                          locatedCell?.row === index && locatedCell.column === 0
+                            ? '3px solid #35664b'
+                            : undefined,
+                      }}
+                    >
                       {selection?.values?.[index]?.[0]}
                     </td>
                     <td>已登记</td>
@@ -166,6 +198,12 @@ export function DemoDocument({ selection, kind, disabled, onSwitch }: Props) {
           <span>100%</span>
         </div>
       </div>
+      {generatedNotice && (
+        <article className="generated-notice" aria-label="新建通知演示结果">
+          <h3>{generatedNotice.name} · 新文档演示</h3>
+          <p>{generatedNotice.text}</p>
+        </article>
+      )}
       <p className="demo-footnote">这是练习用的文件，可以放心尝试。刷新页面后恢复初始内容。</p>
     </section>
   );

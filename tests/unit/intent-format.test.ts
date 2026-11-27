@@ -4,6 +4,110 @@ import { LocalIntentProvider } from '../../src/services/intent';
 
 const intent = new LocalIntentProvider();
 
+describe('扩展功能声明的短句', () => {
+  const extendedIds = new Set([
+    'sheet.autofit',
+    'sheet.wrap',
+    'sheet.header',
+    'sheet.print',
+    'document.saveCopy',
+    'document.exportPdf',
+    'sheet.checkRecords',
+    'document.notice',
+  ]);
+  const phrases = features
+    .filter((feature) => extendedIds.has(feature.id))
+    .flatMap((feature) => feature.phrases.map((input) => ({ input, featureId: feature.id })));
+
+  it.each(phrases)('$featureId 保留短句及礼貌前缀：$input', async ({ input, featureId }) => {
+    for (const request of [input, `请帮我${input}一下，谢谢。`, `麻烦你${input}即可。`]) {
+      expect(await intent.resolve(request, features), request).toEqual({
+        type: 'match',
+        featureId,
+      });
+    }
+  });
+});
+
+describe('表格格式指令保留完整意图', () => {
+  it.each([
+    ['自动调整列宽', 'sheet.autofit'],
+    ['请帮我自动调整列宽一下', 'sheet.autofit'],
+    ['把选中的列自动列宽', 'sheet.autofit'],
+    ['麻烦你将当前选区列宽自适应即可。', 'sheet.autofit'],
+    ['自动换行', 'sheet.wrap'],
+    ['请把选中的单元格自动换行', 'sheet.wrap'],
+    ['单元格换行', 'sheet.wrap'],
+    ['麻烦你将当前选区单元格换行即可。', 'sheet.wrap'],
+    ['启用换行', 'sheet.wrap'],
+    ['突出表头', 'sheet.header'],
+    ['请把当前选区加粗表头', 'sheet.header'],
+    ['设置表头', 'sheet.header'],
+  ])('支持完整当前选区请求：%s', async (input, featureId) => {
+    expect(await intent.resolve(input!, features)).toEqual({ type: 'match', featureId });
+  });
+
+  it.each([
+    '关闭自动换行',
+    '禁用自动换行',
+    '不自动换行',
+    '请不要把当前选区自动换行',
+    '请把当前选区的自动换行关闭，谢谢。',
+    '不启用换行',
+    '取消单元格换行',
+    '只把第二行自动换行',
+    '第2行自动换行',
+    '把选中单元格的第二行自动换行',
+    '请将A1:B2自动换行',
+    '自动换行只对第二行',
+    '仅对可见单元格自动换行',
+    '自动换行但排除隐藏行',
+    '自动调整列宽到20磅',
+    '把列宽自适应设为20',
+    '调整列宽为三十',
+    '请把当前选区自动调整列宽到２０磅，谢谢。',
+    '请把选中的列自动列宽20pt',
+    '请把当前选区列宽自适应设为三十',
+    '请将第二列自动调整列宽',
+    '只调整列宽不影响选区外的单元格',
+    '去掉加粗表头',
+    '移除加粗表头',
+    '请取消加粗表头',
+    '不加粗表头',
+    '请把当前选区加粗表头去掉，谢谢。',
+    '请把选中单元格的第二行加粗表头',
+    '只对第二行突出表头',
+    '突出表头字号20磅',
+    '突出表头并变红',
+    '突出表头是什么意思',
+    '请把当前选区加粗表头成红色',
+    '我昨天听说了加粗表头',
+  ])('不支持的状态、范围、数值或附加要求先澄清：%s', async (input) => {
+    expect(await intent.resolve(input, features)).toMatchObject({ type: 'clarify' });
+  });
+
+  it.each(['加粗表头并加粗', '加粗并加粗表头', '加粗表头后取消加粗', '突出表头但不加粗'])(
+    '表头之外的加粗要求仍需逐项说明：%s',
+    async (input) => {
+      expect(await intent.resolve(input, features)).toEqual({
+        type: 'choices',
+        featureIds: ['text.bold', 'sheet.header'],
+      });
+    },
+  );
+
+  it('表头短句重叠消除后仍保留其他独立功能', async () => {
+    expect(await intent.resolve('加粗表头并居中', features)).toEqual({
+      type: 'choices',
+      featureIds: ['paragraph.center', 'sheet.header'],
+    });
+    expect(await intent.resolve('加粗表头并自动换行', features)).toEqual({
+      type: 'choices',
+      featureIds: ['sheet.wrap', 'sheet.header'],
+    });
+  });
+});
+
 describe('明确的文字格式指令', () => {
   it.each(['请加粗', '把选中文字设置为粗体'])('加粗：%s', async (input) => {
     expect(await intent.resolve(input, features)).toEqual({

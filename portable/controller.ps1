@@ -81,7 +81,7 @@ function Assert-PortFree([int]$Port,[string]$Address) {
   try { $listener.Start() } catch { throw "PORT_IN_USE:$Port" } finally { $listener.Stop() }
 }
 function Assert-Package([bool]$UseWps,[bool]$UseOffice) {
-  $required = @('site\index.html','runtime\node.exe','app\server.mjs','samples\OfficeHelper-Sample.docx','samples\OfficeHelper-Sample.xlsx')
+  $required = @('site\index.html','runtime\node.exe','app\server.mjs','app\site-policy.mjs','samples\OfficeHelper-Sample.docx','samples\OfficeHelper-Sample.xlsx')
   if ($UseOffice) { $required += 'manifests\office.xml' }
   if ($UseWps) { $required += @('site\wps\writer\ribbon.xml','site\wps\sheet\ribbon.xml') }
   foreach ($file in $required) { if (-not (Test-Path -LiteralPath (Join-Path $PackageRoot $file) -PathType Leaf)) { throw 'PACKAGE_INCOMPLETE' } }

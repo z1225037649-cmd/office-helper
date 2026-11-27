@@ -4,16 +4,85 @@ export type Capability =
   | 'selection.read'
   | 'text.resize'
   | 'text.bold'
+  | 'text.documentStyles'
   | 'paragraph.center'
   | 'paragraph.spacing'
   | 'paragraph.indent'
+  | 'sheet.autofit'
+  | 'sheet.wrap'
+  | 'sheet.header'
+  | 'sheet.print'
+  | 'document.saveCopy'
+  | 'document.exportPdf'
+  | 'document.notice'
+  | 'selection.locate'
   | 'history.undo';
 export type CellValue = string | number | boolean | null;
 export type CellType = 'empty' | 'number' | 'text' | 'boolean' | 'error' | 'unknown';
+export type ExportScope = 'document' | 'selection' | 'activeSheet';
 
 /** Extra native reads are opt-in so ordinary selection and sum keep their existing path. */
 export interface SelectionReadOptions {
   includeCellTypes?: boolean;
+  includeSheetLayout?: boolean;
+  includePrintSettings?: boolean;
+  includeDocumentParagraphs?: boolean;
+}
+
+/** Native units are retained verbatim for conflict-safe restoration. */
+export interface SheetLayoutSnapshot {
+  columnWidths: number[];
+  widthUnit: 'points' | 'characters';
+  wrapText: boolean[][];
+  headerBold: boolean[];
+  merged: boolean;
+  protected: boolean;
+  firstRow: number;
+  firstColumn: number;
+  sheetName: string;
+}
+
+export interface PrintSettingsSnapshot {
+  available: boolean;
+  reason?: string;
+  printArea: string;
+  orientation: string;
+  zoom: number | false;
+  fitWide: number;
+  fitTall: number;
+  /** A measured content width, not an invented page-count estimate. */
+  contentWidthPoints?: number;
+}
+
+export interface NoticeFields {
+  title: string;
+  time: string;
+  location: string;
+  body: string;
+  contact: string;
+}
+
+export interface DuplicateOptions {
+  keyColumns: number[];
+  requiredColumns: number[];
+  trimWhitespace: boolean;
+  ignoreCase: boolean;
+  hasHeader: boolean;
+}
+
+/** Row/column are zero-based offsets inside the original inspected range. */
+export interface ReportFinding {
+  id: string;
+  label: string;
+  description: string;
+  row: number;
+  column: number;
+  /** Text-document finding metadata; offsets are UTF-16 code units within one paragraph. */
+  sourceExcerpt?: string;
+  category?: string;
+  status?: string;
+  startOffset?: number;
+  endOffset?: number;
 }
 
 export interface ParagraphSnapshot {
@@ -29,6 +98,24 @@ export interface ParagraphSnapshot {
   leftIndent: number;
   rightIndent: number;
   isListItem: boolean;
+}
+
+export type BuiltInParagraphStyle =
+  | 'Normal'
+  | 'Title'
+  | 'Subtitle'
+  | 'Heading1'
+  | 'Heading2'
+  | 'Heading3'
+  | 'Other';
+
+/** Lightweight, serializable paragraph data used by explicit whole-document tasks. */
+export interface DocumentParagraphSnapshot {
+  index: number;
+  text: string;
+  style: BuiltInParagraphStyle;
+  isListItem: boolean;
+  inTable: boolean;
 }
 
 export interface HostInfo {
@@ -51,21 +138,44 @@ export interface SelectionSnapshot {
   fontSize?: number;
   bold?: boolean;
   paragraphs?: ParagraphSnapshot[];
+  documentParagraphs?: DocumentParagraphSnapshot[];
   values?: CellValue[][];
   /** Native cell types distinguish spreadsheet errors from text or numeric error codes. */
   cellTypes?: CellType[][];
   /** All cells in a contiguous range, including hidden and filtered rows. */
   rowScope?: 'all';
+  sheetLayout?: SheetLayoutSnapshot;
+  printSettings?: PrintSettingsSnapshot;
 }
 
 export type TextActionPlan =
   | { type: 'text.resize'; size: number }
   | { type: 'text.bold'; bold: boolean }
+  | {
+      type: 'text.documentStyles';
+      assignments: { paragraphIndex: number; style: 'Heading1' | 'Heading2' | 'Heading3' }[];
+    }
   | { type: 'paragraph.center' }
   | { type: 'paragraph.spacing'; multiple: number }
   | { type: 'paragraph.indent'; points: number };
 
-export type ActionPlan = { type: 'report'; message: string } | TextActionPlan;
+export type ExtendedActionPlan =
+  | { type: 'sheet.autofit' }
+  | { type: 'sheet.wrap' }
+  | { type: 'sheet.header' }
+  | { type: 'sheet.print' }
+  | { type: 'document.saveCopy'; fileName: string; folder?: string }
+  | { type: 'document.exportPdf'; fileName: string; folder?: string; scope?: ExportScope }
+  | { type: 'document.notice'; fields: NoticeFields };
+
+export type ActionPlan =
+  | { type: 'report'; message: string; findings?: ReportFinding[]; outcome?: 'guidance' }
+  | TextActionPlan
+  | ExtendedActionPlan;
+
+export function isExtendedPlan(plan: ActionPlan): plan is ExtendedActionPlan {
+  return plan.type.startsWith('sheet.') || plan.type.startsWith('document.');
+}
 
 /** Explicit, safely parsed parameters supplied by the user for a feature. */
 export interface FeatureParameters {
@@ -73,12 +183,26 @@ export interface FeatureParameters {
   bold?: boolean;
   lineSpacingMultiple?: number;
   firstLineIndentPoints?: number;
+  duplicates?: DuplicateOptions;
+  notice?: NoticeFields;
+  fileName?: string;
+  folder?: string;
+  exportScope?: ExportScope;
 }
 
 export interface ChangeReceipt {
   token: string;
   message: string;
   canUndo: boolean;
+  outcome?: 'completed' | 'guidance' | 'cancelled' | 'download';
+  location?: string;
+  actions?: ResultAction[];
+}
+
+/** Opaque host-owned identifiers; the UI never opens caller-supplied paths. */
+export interface ResultAction {
+  id: string;
+  label: string;
 }
 
 export interface HostAdapter {
@@ -90,6 +214,8 @@ export interface HostAdapter {
     expected: SelectionSnapshot,
   ): Promise<ChangeReceipt>;
   undo(receipt: ChangeReceipt): Promise<void>;
+  locate?(selection: SelectionSnapshot, row: number, column: number): Promise<void>;
+  openResult?(actionId: string): Promise<void>;
   dispose(): void;
 }
 
@@ -104,10 +230,11 @@ export interface FeatureDefinition {
   readOptions?: SelectionReadOptions;
   /** A parameterized button focuses the request field instead of inventing a value. */
   inputPrompt?: { prefix: string; message: string };
+  form?: 'duplicates' | 'notice' | 'save';
   prepare(
     selection: SelectionSnapshot,
     parameters?: FeatureParameters,
-  ): { summary: string; plan: ActionPlan };
+  ): { summary: string; plan: ActionPlan; confirmLabel?: string };
 }
 
 export interface PreparedTask {
@@ -116,11 +243,16 @@ export interface PreparedTask {
   target: string;
   summary: string;
   changesDocument: boolean;
+  confirmLabel?: string;
 }
 
 export interface TaskResult {
   message: string;
   canUndo: boolean;
+  outcome?: ChangeReceipt['outcome'];
+  location?: string;
+  findings?: ReportFinding[];
+  actions?: ResultAction[];
 }
 
 export interface ActivityEntry {

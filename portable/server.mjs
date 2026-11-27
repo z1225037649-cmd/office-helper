@@ -1,8 +1,9 @@
 import http from 'node:http';
 import https from 'node:https';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { resolve, sep, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isPortableSitePath } from './site-policy.mjs';
 
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -44,7 +45,7 @@ export function createStaticHandler(root) {
       return;
     }
     if (path.endsWith('/')) path += 'index.html';
-    if (!(path === '/index.html' || path === '/favicon.svg' || /^\/(assets|wps)\//.test(path))) {
+    if (!isPortableSitePath(path.slice(1))) {
       response.writeHead(404).end();
       return;
     }
@@ -54,6 +55,9 @@ export function createStaticHandler(root) {
       return;
     }
     try {
+      // A manually modified extraction must not expose files outside its site.
+      const [actualBase, actualFilename] = await Promise.all([realpath(base), realpath(filename)]);
+      if (!actualFilename.startsWith(actualBase + sep)) throw new Error('Outside site');
       const info = await stat(filename);
       if (!info.isFile()) throw new Error('Not a file');
       const body = await readFile(filename);

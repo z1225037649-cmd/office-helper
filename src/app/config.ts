@@ -9,5 +9,13 @@ export const appConfig = {
     'sheet.sum': true,
     'sheet.average': true,
     'selection.inspect': true,
+    'sheet.autofit': true,
+    'sheet.wrap': true,
+    'sheet.header': true,
+    'sheet.print': true,
+    'document.saveCopy': true,
+    'document.exportPdf': true,
+    'sheet.checkRecords': true,
+    'document.notice': true,
   } satisfies Record<string, boolean>,
 };
