@@ -7,6 +7,7 @@ export {
   parseDelimitedText,
   serializeSheetBatchCsv,
 } from './delimited';
+export type { DelimitedParseLimits, DelimitedParseOptions } from './delimited';
 export type {
   BlankRepresentation,
   NormalizationAnalysis,

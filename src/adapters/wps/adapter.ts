@@ -15,18 +15,9 @@ import {
   MAX_SELECTION_CELLS,
 } from '../../core/selection';
 import { ReadOnlyAdapter } from '../shared/read-only-adapter';
-import {
-  getWpsApplication,
-  type WpsApplication,
-  type WpsDocument,
-  type WpsRange,
-} from './bridge';
+import { getWpsApplication, type WpsApplication, type WpsDocument, type WpsRange } from './bridge';
 import { validateResize } from '../shared/resize';
-import {
-  projectTextPlan,
-  textPlanMessage,
-  validateTextSelection,
-} from '../../core/text-format';
+import { projectTextPlan, textPlanMessage, validateTextSelection } from '../../core/text-format';
 import { readWpsSheetDetails } from './sheet-details';
 import { readWpsPrintSettings, readWpsSheetLayout, readWpsValues, WpsTasks } from './tasks';
 import {
@@ -37,6 +28,7 @@ import {
   type WpsParagraphState,
 } from './paragraphs';
 import {
+  isWpsNormalStyle,
   nativeWpsStyle,
   readWpsDocumentStyles,
   supportsWpsDocumentStyles,
@@ -455,7 +447,7 @@ export class WpsAdapter extends ReadOnlyAdapter {
     try {
       for (const { paragraphIndex, style } of plan.assignments) {
         const target = state.targets[paragraphIndex];
-        if (!target || target.nativeStyle !== app.Enum?.wdStyleNormal)
+        if (!target || !isWpsNormalStyle(app, target.nativeStyle))
           throw new HelperError('STALE_SELECTION', '标题段落样式已改变，请重新预览。');
         target.range.Style = nativeWpsStyle(app, style);
       }

@@ -14,6 +14,21 @@ const categoryLabels = {
 const displayLimit = 200;
 const excerptLimit = 500;
 
+function excerptForDisplay(text: string): string {
+  let end = Math.min(text.length, excerptLimit);
+  if (
+    end < text.length &&
+    end > 0 &&
+    text.charCodeAt(end - 1) >= 0xd800 &&
+    text.charCodeAt(end - 1) <= 0xdbff &&
+    text.charCodeAt(end) >= 0xdc00 &&
+    text.charCodeAt(end) <= 0xdfff
+  ) {
+    end -= 1;
+  }
+  return text.slice(0, end);
+}
+
 export const bidChecklist: FeatureDefinition = {
   id: 'document.bidChecklist',
   title: '检查标书要求',
@@ -27,8 +42,7 @@ export const bidChecklist: FeatureDefinition = {
     if (selection.kind !== 'text' || selection.targetId !== 'document-body')
       throw new HelperError('UNAVAILABLE', '请在 Word 文字文档中检查标书要求。');
     const paragraphs = selection.documentParagraphs;
-    if (!paragraphs)
-      throw new HelperError('UNAVAILABLE', '当前 Word 版本没有提供全文段落信息。');
+    if (!paragraphs) throw new HelperError('UNAVAILABLE', '当前 Word 版本没有提供全文段落信息。');
 
     const findings: ReportFinding[] = [];
     let candidateCount = 0;
@@ -44,7 +58,7 @@ export const bidChecklist: FeatureDefinition = {
           description: `规则识别出的候选条目，不代表最终要求结论。源文第 ${paragraph.index + 1} 段，段内字符偏移 ${candidate.startOffset}–${candidate.endOffset}。${isTruncated ? '显示片段已截短，请以原文为准。' : ''}`,
           row: paragraph.index,
           column: 0,
-          sourceExcerpt: candidate.originalExcerpt.slice(0, excerptLimit),
+          sourceExcerpt: excerptForDisplay(candidate.originalExcerpt),
           category: candidate.category,
           status: candidate.status,
           startOffset: candidate.startOffset,

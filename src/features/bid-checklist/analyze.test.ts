@@ -128,6 +128,43 @@ describe('analyzeBidChecklist', () => {
     ]);
   });
 
+  it('recognizes Chinese numbered instructions and keeps deadlines ahead of submission actions', () => {
+    const candidates = analyzeBidChecklist(
+      [
+        '一、提交经签署的承诺书。',
+        '（二）于2026年12月1日前提交投标文件。',
+        '第3条 请在开标前提供样品。',
+        '1) Submit the signed form by the deadline.',
+      ].join('\r\n'),
+    );
+
+    expect(candidates.map(({ originalExcerpt, category }) => [originalExcerpt, category])).toEqual([
+      ['一、提交经签署的承诺书。', 'submission'],
+      ['（二）于2026年12月1日前提交投标文件。', 'deadline'],
+      ['第3条 请在开标前提供样品。', 'deadline'],
+      ['1) Submit the signed form by the deadline.', 'deadline'],
+    ]);
+  });
+
+  it('ignores explicit negative requirements and ordinary explanatory wording', () => {
+    const source = [
+      '本项仅供参考，无需提交任何证明。',
+      '供应商不必填写此栏目。',
+      '投标人不需要提供纸本副本。',
+      'No separate certificate is required.',
+      'The bidder is not required to attach this optional schedule.',
+      'This item is not mandatory.',
+      'Please note that no additional form is required.',
+      '投标人必须提供有效营业执照。',
+      '投标人不得转让本合同。',
+    ].join('\n');
+
+    expect(analyzeBidChecklist(source).map(({ originalExcerpt }) => originalExcerpt)).toEqual([
+      '投标人必须提供有效营业执照。',
+      '投标人不得转让本合同。',
+    ]);
+  });
+
   it('returns no candidates for empty text, headings, or blank lines', () => {
     expect(analyzeBidChecklist('')).toEqual([]);
     expect(analyzeBidChecklist('\n\r\nTechnical Specifications\n\t\n')).toEqual([]);
@@ -154,5 +191,24 @@ describe('analyzeBidChecklist', () => {
     expect(first).toEqual(second);
     expect(first).not.toBe(second);
     expect(source).toBe('Submit the bid by the stated deadline.');
+  });
+
+  it('scans a long line without truncating its matching requirement or UTF-16 offsets', () => {
+    const source = `${'背景'.repeat(40_000)} 投标人必须提供资质证明。`;
+    const candidates = analyzeBidChecklist(source);
+    expect(candidates).toHaveLength(1);
+    const candidate = candidates[0]!;
+    const expectedExcerpt = '投标人必须提供资质证明。';
+
+    expect(candidate).toEqual({
+      originalExcerpt: source,
+      startOffset: 0,
+      endOffset: source.length,
+      category: 'qualification',
+      status: 'unfilled',
+      isHeuristicCandidate: true,
+    });
+    expect(source.slice(candidate.startOffset, candidate.endOffset)).toBe(source);
+    expect(candidate.originalExcerpt.endsWith(expectedExcerpt)).toBe(true);
   });
 });

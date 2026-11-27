@@ -423,7 +423,7 @@ export function App({
                             {finding.sourceExcerpt && <q>{finding.sourceExcerpt}</q>}
                             <span>{finding.description}</span>
                           </span>
-                          {host.locate && (
+                          {host.locate && host.info.capabilities.includes('selection.locate') && (
                             <button
                               type="button"
                               className="secondary-button"

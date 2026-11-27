@@ -15,6 +15,7 @@ import {
   Copy,
   FileDown,
   FilePlus2,
+  FileSpreadsheet,
   ScanSearch,
   Type,
   X,
@@ -92,6 +93,9 @@ export function FeatureBrowser({
     ...entries.filter(({ feature }) => !preferredIds.includes(feature.id)),
   ].slice(0, 4);
   const query = search.trim().toLocaleLowerCase();
+  const batchLabels = ['批量合并与数据检查', 'csv', 'tsv', '批量'];
+  const showBatchTool =
+    isSheet && batchLabels.some((label) => label.includes(query) || query.includes(label));
   const matchingFeatures = entries.filter(({ feature }) =>
     [
       feature.title,
@@ -196,9 +200,11 @@ export function FeatureBrowser({
               </section>
             );
           })}
-          {isSheet && (
+          {showBatchTool && (
             <section className="catalog-group" aria-labelledby={`${headingId}-batch`}>
-              <h3 id={`${headingId}-batch`} className="catalog-group-heading">批量文件</h3>
+              <h3 id={`${headingId}-batch`} className="catalog-group-heading">
+                批量文件
+              </h3>
               <div className="catalog-items">
                 <button
                   type="button"
@@ -206,16 +212,18 @@ export function FeatureBrowser({
                   disabled={busy}
                   onClick={onOpenBatchTool}
                 >
-                  <ScanSearch size={16} aria-hidden="true" />
+                  <FileSpreadsheet size={16} aria-hidden="true" />
                   <span className="catalog-item-copy">
                     <span className="feature-label">批量合并与数据检查</span>
-                    <span className="catalog-item-description">导入多个 CSV／TSV，按列名合并、查看异常候选并下载结果</span>
+                    <span className="catalog-item-description">
+                      导入多个 CSV／TSV，按列名合并、查看异常候选并下载结果
+                    </span>
                   </span>
                 </button>
               </div>
             </section>
           )}
-          {!matchingFeatures.length && (
+          {!matchingFeatures.length && !showBatchTool && (
             <p className="catalog-empty" role="status">
               {features.length
                 ? '没有匹配的功能，试试其他关键词，或清空搜索。'

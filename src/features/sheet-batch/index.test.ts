@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeSheetNormalization, createSheetBatchPlan } from './index';
+import { analyzeSheetNormalization, createSheetBatchPlan, parseDelimitedText } from './index';
 import type { SheetBatchSource } from './index';
 
 describe('standalone sheet batch preview', () => {
+  it('aligns case-sensitive headers and keeps row indexes based on logical records', () => {
+    const parsed = parseDelimitedText(
+      'Name,name\r\n"first\ncontinued",-2\r\n\r\nlast,',
+      'source.csv',
+    );
+    const plan = createSheetBatchPlan([parsed]);
+
+    expect(plan.columns).toEqual(['Name', 'name']);
+    expect(plan.rows).toEqual([
+      {
+        values: ['first\ncontinued', '-2'],
+        sourceLabel: 'source.csv',
+        originalRowIndex: 0,
+      },
+      { values: ['', undefined], sourceLabel: 'source.csv', originalRowIndex: 1 },
+      { values: ['last', ''], sourceLabel: 'source.csv', originalRowIndex: 2 },
+    ]);
+  });
+
   it('unions exact header names, aligns values, appends rows, and keeps source row provenance', () => {
     const sources: SheetBatchSource[] = [
       {

@@ -38,16 +38,10 @@ function uniqueLabel(fileName: string, inputs: readonly BatchInput[]): string {
 function findingLocation(finding: NormalizationFinding): string {
   return finding.rowIndex === null
     ? `整列「${finding.columnName}」`
-    : `第 ${finding.rowIndex + 1} 行「${finding.columnName}」`;
+    : `第 ${finding.rowIndex + 1} 条记录「${finding.columnName}」`;
 }
 
-export function SheetBatchTool({
-  busy,
-  onClose,
-}: {
-  busy: boolean;
-  onClose: () => void;
-}) {
+export function SheetBatchTool({ busy, onClose }: { busy: boolean; onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [inputs, setInputs] = useState<BatchInput[]>([]);
   const [loading, setLoading] = useState(false);
@@ -59,7 +53,8 @@ export function SheetBatchTool({
     [inputs],
   );
   const analysis = useMemo(
-    () => (inputs.length ? analyzeSheetNormalization(inputs.map(({ source }) => source)) : undefined),
+    () =>
+      inputs.length ? analyzeSheetNormalization(inputs.map(({ source }) => source)) : undefined,
     [inputs],
   );
   const combinedSource = useMemo(
@@ -67,7 +62,7 @@ export function SheetBatchTool({
       plan
         ? {
             sourceLabel: 'merged.csv',
-            headers: [...plan.columns, '来源文件', '原始行号'],
+            headers: [...plan.columns, '来源文件', '原始记录号'],
             rows: plan.rows.map(({ values, sourceLabel, originalRowIndex }) => [
               ...values,
               sourceLabel,
@@ -91,10 +86,13 @@ export function SheetBatchTool({
       if (inputs.length + incoming.length > maximumFiles)
         throw new TypeError(`一次最多处理 ${maximumFiles} 个文件。`);
       if (incoming.some((file) => !/\.(?:csv|tsv)$/iu.test(file.name)))
-        throw new TypeError('请选择 CSV 或 TSV 文件。Excel 工作簿请先另存为 CSV 或制表符分隔文件。');
+        throw new TypeError(
+          '请选择 CSV 或 TSV 文件。Excel 工作簿请先另存为 CSV 或制表符分隔文件。',
+        );
       if (incoming.some((file) => file.size > maximumFileBytes))
         throw new TypeError('单个文件不能超过 10 MB。');
-      const nextBytes = inputs.reduce((sum, item) => sum + item.size, 0) +
+      const nextBytes =
+        inputs.reduce((sum, item) => sum + item.size, 0) +
         incoming.reduce((sum, file) => sum + file.size, 0);
       if (nextBytes > maximumTotalBytes) throw new TypeError('所有文件合计不能超过 50 MB。');
 
@@ -119,7 +117,9 @@ export function SheetBatchTool({
 
       setInputs(next);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '文件读取失败，请另存为 UTF-8 CSV 后重试。');
+      setError(
+        reason instanceof Error ? reason.message : '文件读取失败，请另存为 UTF-8 CSV 后重试。',
+      );
     } finally {
       setLoading(false);
       if (inputRef.current) inputRef.current.value = '';
@@ -128,10 +128,7 @@ export function SheetBatchTool({
 
   function downloadMerged() {
     if (!plan || !combinedSource || unsafeCells > 0 || busy || loading) return;
-    const csv = serializeSheetBatchCsv(
-      combinedSource.headers,
-      combinedSource.rows,
-    );
+    const csv = serializeSheetBatchCsv(combinedSource.headers, combinedSource.rows);
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -144,7 +141,9 @@ export function SheetBatchTool({
   return (
     <section className="sheet-batch-tool" aria-label="表格批量合并与检查">
       <div className="sheet-batch-heading">
-        <span className="assistant-symbol"><FileSpreadsheet size={18} /></span>
+        <span className="assistant-symbol">
+          <FileSpreadsheet size={18} />
+        </span>
         <div>
           <h2>批量合并与数据检查</h2>
           <p>导入多个 CSV／TSV，按完全相同的列名对齐，先预览再下载。</p>
@@ -155,7 +154,9 @@ export function SheetBatchTool({
       </div>
 
       <p className="sheet-batch-note">
-        支持 UTF-8、UTF-16 和 GB18030 编码。最多 10 个文件、每个 10 MB、合计 50 MB；结果只在浏览器生成，不会改动当前工作簿。含公式样式文字时会暂停 CSV 下载，避免打开文件时触发公式。
+        支持 UTF-8、UTF-16 和 GB18030 编码。最多 10 个文件、每个 10 MB、合计 50
+        MB；结果只在浏览器生成，不会改动当前工作簿。含公式样式文字时会暂停 CSV
+        下载，避免打开文件时触发公式。
       </p>
       <input
         ref={inputRef}
@@ -190,13 +191,24 @@ export function SheetBatchTool({
         )}
       </div>
 
-      {error && <p className="sheet-batch-error" role="alert">{error}</p>}
-      {status && <p className="sheet-batch-status" role="status">{status}</p>}
+      {error && (
+        <p className="sheet-batch-error" role="alert">
+          {error}
+        </p>
+      )}
+      {status && (
+        <p className="sheet-batch-status" role="status">
+          {status}
+        </p>
+      )}
       {!!inputs.length && (
         <ul className="sheet-batch-files" aria-label="已导入文件">
           {inputs.map(({ id, source, size }) => (
             <li key={id}>
-              <span>{source.sourceLabel} · {source.rows.length.toLocaleString()} 行 · {(size / 1024).toFixed(0)} KB</span>
+              <span>
+                {source.sourceLabel} · {source.rows.length.toLocaleString()} 行 ·{' '}
+                {(size / 1024).toFixed(0)} KB
+              </span>
               <button
                 type="button"
                 className="icon-button"
@@ -217,9 +229,17 @@ export function SheetBatchTool({
       {plan && analysis && (
         <>
           <div className="sheet-batch-summary" role="status">
-            <strong>{plan.rowCountSummary.sourceCount} 个文件 · {plan.rowCountSummary.plannedRowCount.toLocaleString()} 行 · {plan.columns.length} 列</strong>
-            <span>{analysis.findingCount.toLocaleString()} 条数据异常候选，仅供核对；没有自动转换或修改。</span>
-            {unsafeCells > 0 && <span>发现 {unsafeCells} 个以公式符号开头的文字单元格，CSV 下载已暂停。</span>}
+            <strong>
+              {plan.rowCountSummary.sourceCount} 个文件 ·{' '}
+              {plan.rowCountSummary.plannedRowCount.toLocaleString()} 行 · {plan.columns.length} 列
+            </strong>
+            <span>
+              {analysis.findingCount.toLocaleString()}{' '}
+              条数据异常候选，仅供核对；没有自动转换或修改。
+            </span>
+            {unsafeCells > 0 && (
+              <span>发现 {unsafeCells} 个以公式符号开头的文字单元格，CSV 下载已暂停。</span>
+            )}
           </div>
 
           <div className="sheet-batch-sources">
@@ -232,22 +252,41 @@ export function SheetBatchTool({
             ))}
           </div>
 
-          <div className="sheet-batch-table-wrap" role="region" aria-label="合并结果前八行预览" tabIndex={0}>
+          <div
+            className="sheet-batch-table-wrap"
+            role="region"
+            aria-label="合并结果前八行预览"
+            tabIndex={0}
+          >
             <table>
-              <thead><tr>{plan.columns.map((column) => <th key={column}>{column}</th>)}<th>来源与原始行</th></tr></thead>
+              <thead>
+                <tr>
+                  {plan.columns.map((column) => (
+                    <th key={column}>{column}</th>
+                  ))}
+                  <th>来源与原始记录</th>
+                </tr>
+              </thead>
               <tbody>
                 {previewRows.map((row) => (
                   <tr key={`${row.sourceLabel}-${row.originalRowIndex}`}>
-                {row.values.map((value, columnIndex) => (
-                      <td key={columnIndex}>{value === undefined ? '—' : value === null ? '空值' : String(value)}</td>
+                    {row.values.map((value, columnIndex) => (
+                      <td key={columnIndex}>
+                        {value === undefined ? '—' : value === null ? '空值' : String(value)}
+                      </td>
                     ))}
-                    <td className="sheet-batch-provenance">{row.sourceLabel} · 第 {row.originalRowIndex + 1} 行</td>
+                    <td className="sheet-batch-provenance">
+                      {row.sourceLabel} · 第 {row.originalRowIndex + 1} 条记录
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="sheet-batch-provenance-note">预览显示前 8 行；下载会包含全部数据及来源文件／原始行号列。</p>
+          <p className="sheet-batch-provenance-note">
+            预览显示前 8 条记录；下载会包含全部数据及来源文件／原始记录号列。记录号不含表头，按
+            CSV／TSV 逻辑记录计数，引用字段内的换行不另计行。
+          </p>
 
           <section className="sheet-batch-findings" aria-label="数据异常候选">
             <h3>数据检查候选（前 30 条）</h3>
@@ -256,15 +295,22 @@ export function SheetBatchTool({
             ) : (
               <ul>
                 {previewFindings.map((finding, index) => (
-                  <li key={`${finding.sourceLabel}-${finding.columnName}-${finding.rowIndex}-${finding.kind}-${index}`}>
-                    <strong>{finding.sourceLabel} · {findingLocation(finding)}</strong>
+                  <li
+                    key={`${finding.sourceLabel}-${finding.columnName}-${finding.rowIndex}-${finding.kind}-${index}`}
+                  >
+                    <strong>
+                      {finding.sourceLabel} · {findingLocation(finding)}
+                    </strong>
                     <span>{finding.suggestion}</span>
                   </li>
                 ))}
               </ul>
             )}
             {analysis.findingCount > previewFindings.length && (
-              <p>共 {analysis.findingCount.toLocaleString()} 条，当前仅显示前 {previewFindings.length} 条。</p>
+              <p>
+                共 {analysis.findingCount.toLocaleString()} 条，当前仅显示前{' '}
+                {previewFindings.length} 条。
+              </p>
             )}
           </section>
         </>

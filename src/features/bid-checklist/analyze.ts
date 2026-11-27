@@ -26,12 +26,16 @@ const requirementLanguage =
   /(?:\b(?:must|shall|should|will be required|required to|is required|are required|are to|is to|have to|has to|need to|needs to|mandatory|obligatory)\b|必须|须(?:要|于|在|提交|提供|满足|符合|完成|具备|持有)?|应当|应(?:于|在|提交|提供|满足|符合|完成|具备|持有)|不得|需(?:要|于|在|提交|提供|满足|符合|完成|具备|持有))/iu;
 
 const deadlineLanguage =
-  /(?:\b(?:deadline|due date|due by|no later than|closing (?:date|time)|submission (?:deadline|date|time)|must be received by|received no later than)\b|截止(?:日期|时间|日|时)?|截至(?:日期|时间)?|递交期限|提交期限|开标时间|于.{0,32}(?:前|之前))/iu;
+  /(?:\b(?:deadline|due date|due by|no later than|closing (?:date|time)|submission (?:deadline|date|time)|must be received by|received no later than)\b|截止(?:日期|时间|日|时)?|截至(?:日期|时间)?|递交期限|提交期限|开标时间|(?:(?:必须|须|应(?:当)?|请)(?:于|在)|(?<!\p{Script=Han})(?:于|在))[^\r\n，。！？；;]{1,32}(?:前|之前))/iu;
 
 const imperativeLanguage =
   /^(?:(?:please|the bidder|bidders|the tenderer|tenderers|the supplier|suppliers)\s+)?(?:submit|provide|attach|upload|complete|deliver|furnish|quote|state|demonstrate|certify|sign|return|ensure|maintain|meet|supply|specify|list|confirm|enclose|present|prepare|execute|hold|possess|comply|include)\b|^(?:请)?(?:提交|提供|附上|上传|填写|递交|交付|报价|说明|证明|认证|签署|签字|盖章|确认|列明|列出|准备|执行|持有|具备|满足|遵守|包括|包含)/iu;
 
-const listPrefix = /^(?:(?:\d+(?:\.\d+)*|[a-z]|\([a-z\d]+\))[.)]?\s+|[-*•‣]\s+)*/iu;
+const listPrefix =
+  /^(?:(?:第[一二三四五六七八九十百千万零〇\d]+[章节条项部分篇款]|[（(][一二三四五六七八九十百千万零〇a-z\d]+[）)]|[一二三四五六七八九十百千万零〇]+[、．.]|\d+(?:\.\d+)*(?:[.)、．](?=\s|$)|(?=\s))|[a-z][.)]|[-*•‣])\s*)*/iu;
+
+const nonRequirementLanguage =
+  /^(?=[^.!?。！？；;]*(?:\bnot\s+(?:required|mandatory|necessary|obligatory|needed)\b|\b(?:isn't|aren't|wasn't|weren't)\s+(?:required|mandatory|necessary|needed)\b|\bneed(?:s)?\s+not\b|\b(?:do|does|did)\s+not\s+need\s+to\b|\bno\s+need\s+to\b|\bno\s+(?:[a-z-]+\s+){1,5}(?:(?:is|are|was|were)\s+)?required\b|无需|无须|不必|不需要|不须|不需|不要求|未要求|没有必要))/iu;
 
 const categoryLanguage: ReadonlyArray<readonly [BidChecklistCategory, RegExp]> = [
   ['deadline', deadlineLanguage],
@@ -56,6 +60,7 @@ const categoryLanguage: ReadonlyArray<readonly [BidChecklistCategory, RegExp]> =
 function isRequirementCandidate(line: string): boolean {
   const content = line.trim().replace(listPrefix, '');
   if (!content) return false;
+  if (nonRequirementLanguage.test(content)) return false;
   return (
     requirementLanguage.test(content) ||
     deadlineLanguage.test(content) ||
@@ -65,10 +70,15 @@ function isRequirementCandidate(line: string): boolean {
 
 function categorize(line: string): BidChecklistCategory {
   const content = line.trim().replace(listPrefix, '');
-  if (/^(?:please\s+)?(?:submit|upload|attach|enclose|present)\b|^(?:请)?(?:提交|上传|递交|附上)/iu.test(content))
+  if (deadlineLanguage.test(content)) return 'deadline';
+  if (
+    /^(?:please\s+)?(?:submit|upload|attach|enclose|present)\b|^(?:请)?(?:提交|上传|递交|附上)/iu.test(
+      content,
+    )
+  )
     return 'submission';
   for (const [category, language] of categoryLanguage) {
-    if (language.test(line)) return category;
+    if (category !== 'deadline' && language.test(content)) return category;
   }
   return 'other';
 }

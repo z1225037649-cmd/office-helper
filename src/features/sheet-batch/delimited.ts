@@ -3,6 +3,39 @@ import { validateSources } from './validate';
 
 export type Delimiter = ',' | '\t';
 
+/**
+ * Bounds for a single delimited file. `maximumRows` counts data records but does not
+ * count the header; `maximumCells` includes both the header and all data records.
+ */
+export interface DelimitedParseLimits {
+  readonly maximumBytes: number;
+  readonly maximumCharacters: number;
+  readonly maximumRows: number;
+  readonly maximumColumns: number;
+  readonly maximumCells: number;
+}
+
+export type DelimitedParseOptions = Partial<DelimitedParseLimits>;
+
+const defaultParseLimits: DelimitedParseLimits = {
+  maximumBytes: 10 * 1024 * 1024,
+  maximumCharacters: 10 * 1024 * 1024,
+  maximumRows: 100_000,
+  maximumColumns: 200,
+  maximumCells: 1_000_000,
+};
+
+function resolveParseLimits(options: DelimitedParseOptions): DelimitedParseLimits {
+  const limits = { ...defaultParseLimits, ...options };
+  for (const [name, value] of Object.entries(limits)) {
+    const minimum = name === 'maximumRows' ? 0 : 1;
+    if (!Number.isSafeInteger(value) || value < minimum) {
+      throw new TypeError(`CSV 解析限制 ${name} 必须是至少 ${minimum} 的安全整数。`);
+    }
+  }
+  return limits;
+}
+
 function decodeText(bytes: ArrayBuffer): string {
   const data = new Uint8Array(bytes);
   if (data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf)
@@ -48,12 +81,45 @@ export function detectDelimiter(text: string, fileName = ''): Delimiter {
   return tabs > commas ? '\t' : ',';
 }
 
-function parseRows(text: string, delimiter: Delimiter): string[][] {
+function parseRows(
+  text: string,
+  delimiter: Delimiter,
+  limits: DelimitedParseLimits,
+  sourceLabel: string,
+): { headers: string[] | undefined; rows: string[][] } {
+  let headers: string[] | undefined;
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
   let quoted = false;
   let closedQuote = false;
+  let parsedCellCount = 0;
+
+  const pushCell = () => {
+    if (headers !== undefined && row.length >= headers.length) {
+      throw new TypeError(`文件“${sourceLabel}”第 ${rows.length + 2} 条记录比表头多出单元格。`);
+    }
+    if (row.length >= limits.maximumColumns) {
+      throw new TypeError(`文件“${sourceLabel}”的列数超过 ${limits.maximumColumns} 列。`);
+    }
+    row.push(cell);
+    parsedCellCount += 1;
+    if (parsedCellCount > limits.maximumCells) {
+      throw new TypeError(`文件“${sourceLabel}”的单元格总数超过 ${limits.maximumCells} 格。`);
+    }
+    cell = '';
+  };
+
+  const pushRow = () => {
+    if (headers === undefined) {
+      headers = row;
+    } else if (rows.length >= limits.maximumRows) {
+      throw new TypeError(`文件“${sourceLabel}”的数据记录数超过 ${limits.maximumRows} 条。`);
+    } else {
+      rows.push(row);
+    }
+    row = [];
+  };
 
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index]!;
@@ -82,13 +148,10 @@ function parseRows(text: string, delimiter: Delimiter): string[][] {
       if (cell.length !== 0) throw new TypeError('CSV 字段中的引号位置不正确。');
       quoted = true;
     } else if (character === delimiter) {
-      row.push(cell);
-      cell = '';
+      pushCell();
     } else if (character === '\r' || character === '\n') {
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = '';
+      pushCell();
+      pushRow();
       if (character === '\r' && text[index + 1] === '\n') index += 1;
     } else {
       cell += character;
@@ -97,39 +160,61 @@ function parseRows(text: string, delimiter: Delimiter): string[][] {
 
   if (quoted) throw new TypeError('CSV 引号没有闭合，请检查文件格式。');
   if (cell.length > 0 || row.length > 0 || closedQuote) {
-    row.push(cell);
-    rows.push(row);
+    pushCell();
+    pushRow();
   }
-  return rows;
+  return { headers, rows };
 }
 
-export function parseDelimitedText(text: string, sourceLabel: string): SheetBatchSource {
+export function parseDelimitedText(
+  text: string,
+  sourceLabel: string,
+  options: DelimitedParseOptions = {},
+): SheetBatchSource {
+  const limits = resolveParseLimits(options);
+  if (typeof text !== 'string') throw new TypeError('CSV 内容必须是文字。');
+  if (text.length > limits.maximumCharacters) {
+    throw new TypeError(`文件“${sourceLabel}”的文字长度超过 ${limits.maximumCharacters} 个字符。`);
+  }
   const normalized = text.replace(/^\uFEFF/u, '');
   if (!normalized.trim()) throw new TypeError(`文件“${sourceLabel}”没有内容。`);
   const delimiter = detectDelimiter(normalized, sourceLabel);
-  const [headers, ...rawRows] = parseRows(normalized, delimiter);
+  const { headers, rows } = parseRows(normalized, delimiter, limits, sourceLabel);
   if (!headers?.length) throw new TypeError(`文件“${sourceLabel}”缺少表头。`);
 
-  const rows: SheetCellValue[][] = [];
-  for (let index = 0; index < rawRows.length; index += 1) {
-    const row = rawRows[index]!;
-    if (row.length > headers.length)
-      throw new TypeError(`文件“${sourceLabel}”第 ${index + 2} 行比表头多出单元格。`);
-    rows.push(row);
-  }
-
-  const source = { sourceLabel, headers, rows };
+  const source: SheetBatchSource = { sourceLabel, headers, rows };
   validateSources([source]);
   return source;
 }
 
-export function parseDelimitedFile(bytes: ArrayBuffer, sourceLabel: string): SheetBatchSource {
-  return parseDelimitedText(decodeText(bytes), sourceLabel);
+export function parseDelimitedFile(
+  bytes: ArrayBuffer,
+  sourceLabel: string,
+  options: DelimitedParseOptions = {},
+): SheetBatchSource {
+  const limits = resolveParseLimits(options);
+  if (bytes.byteLength > limits.maximumBytes) {
+    throw new TypeError(`文件“${sourceLabel}”超过 ${limits.maximumBytes} 字节。`);
+  }
+  return parseDelimitedText(decodeText(bytes), sourceLabel, limits);
 }
 
 function csvField(value: SheetCellValue): string {
   const text = value === null || value === undefined ? '' : String(value);
-  return /[",\r\n]/u.test(text) ? `"${text.replace(/"/gu, '""')}"` : text;
+  return /[",\r\n\t]/u.test(text) ? `"${text.replace(/"/gu, '""')}"` : text;
+}
+
+function isFormulaLikeText(value: string): boolean {
+  const candidate = value.replace(/^[\s\u0000-\u0020]+/u, '');
+  if (/^[=+@]/u.test(candidate)) return true;
+  if (!candidate.startsWith('-')) return false;
+
+  // Preserve ordinary negative integers, decimals, and exponent-form numbers.
+  if (/^-(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu.test(candidate)) return false;
+
+  // Keep the conservative legacy handling for other leading minus text, since a
+  // spaced unary operator can still precede a formula such as `- SUM(A1)`.
+  return true;
 }
 
 /** Spreadsheet programs can evaluate formula-like text when opening CSV. Refuse unsafe export. */
@@ -139,9 +224,7 @@ export function formulaLikeTextCells(source: SheetBatchSource): number {
   for (const row of cells)
     for (const value of row)
       if (typeof value === 'string') {
-        const candidate = value.replace(/^[\s\u0000-\u0020]+/u, '');
-        if (/^[=+@]/u.test(candidate) || /^-(?=\D|$)/u.test(candidate) || /^-\d+[=+*/^]/u.test(candidate))
-          count += 1;
+        if (isFormulaLikeText(value)) count += 1;
       }
   return count;
 }

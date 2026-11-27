@@ -21,7 +21,10 @@ export interface SheetBatchPreviewRow {
   /** Values aligned with the plan's `columns`; absent source cells are undefined. */
   readonly values: readonly SheetCellValue[];
   readonly sourceLabel: string;
-  /** Zero-based index in the source's `rows` array; the header is not counted. */
+  /**
+   * Zero-based logical data-record index in the source's `rows` array; the header
+   * is excluded, blank records count, and embedded newlines remain within one record.
+   */
   readonly originalRowIndex: number;
 }
 
